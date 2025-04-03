@@ -21,7 +21,6 @@ import java.util.*;
 import java.util.concurrent.RecursiveAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.util.List;
 
 public class PageCrawler extends RecursiveAction {
@@ -33,9 +32,10 @@ public class PageCrawler extends RecursiveAction {
     private final IndexingService indexingService;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
+    private final int maxDepth;
+    private final int currentDepth;
 
-
-    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService) {
+    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService, int maxDepth, int currentDepth) {
         this.site = site;
         this.url = url;
         this.visitedUrls = visitedUrls;
@@ -43,11 +43,17 @@ public class PageCrawler extends RecursiveAction {
         this.indexingService = indexingService;
         this.indexRepository = indexRepository;
         this.lemmaRepository = lemmaRepository;
-
+        this.maxDepth = maxDepth;
+        this.currentDepth = currentDepth;
     }
 
     @Override
     protected void compute() {
+        if (currentDepth > maxDepth) {
+            logger.info("Превышена максимальная глубина для URL: {}", url);
+            return;  // Прерываем выполнение, если глубина больше максимальной
+        }
+
         if (!checkAndLogStopCondition("Начало обработки")) return;
 
         synchronized (visitedUrls) {
@@ -81,9 +87,6 @@ public class PageCrawler extends RecursiveAction {
             Thread.currentThread().interrupt();
         }
     }
-
-
-
 
     private void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
@@ -247,7 +250,10 @@ public class PageCrawler extends RecursiveAction {
             synchronized (visitedUrls) {
                 if (childPath != null && !visitedUrls.contains(childPath)) {
                     visitedUrls.add(childPath);
-                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls, pageRepository, indexingService));
+                    // Увеличиваем глубину на 1 и передаем новую задачу
+                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository,
+                            childUrl, visitedUrls, pageRepository,
+                            indexingService, maxDepth, currentDepth + 1));
                     logger.debug("Добавлена ссылка в обработку: {}", childUrl);
                 } else {
                     logger.debug("Ссылка уже обработана: {}", childUrl);

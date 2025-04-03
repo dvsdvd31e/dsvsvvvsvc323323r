@@ -134,6 +134,10 @@ public class IndexingService {
     }
 
     private void crawlAndIndexPages(searchengine.model.Site site, String startUrl) {
+        // Определяем максимальную глубину и начальную глубину (например, 0 для начала)
+        int maxDepth = 1;  // Максимальная глубина
+        int currentDepth = 0;  // Начальная глубина
+
         forkJoinPool = new ForkJoinPool();
         try {
             forkJoinPool.invoke(new PageCrawler(
@@ -143,12 +147,15 @@ public class IndexingService {
                     startUrl,
                     new HashSet<>(),
                     pageRepository,
-                    this
+                    this,
+                    maxDepth,        // передаем максимальную глубину
+                    currentDepth     // передаем начальную глубину
             ));
         } finally {
             forkJoinPool.shutdown();
         }
     }
+
 
     @Transactional
     public void deleteSiteData(String siteUrl) {
