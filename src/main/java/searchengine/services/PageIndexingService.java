@@ -87,7 +87,7 @@ public class PageIndexingService {
 
             if (foundLemmas.isEmpty()) {
                 // Если лемма не найдена, создаем новую
-                lemma = new Lemma(null, page.getSite(), lemmaText, 0);
+                lemma = new Lemma(  null, page.getSite(), lemmaText, 0);
             } else {
                 // Если лемма найдена, берем первую из списка
                 lemma = foundLemmas.get(0);

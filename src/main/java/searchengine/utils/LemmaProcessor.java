@@ -57,8 +57,6 @@ public class LemmaProcessor {
         return null;
     }
 
-
-
     private List<String> splitIntoWords(String text) {
         return Arrays.stream(text.split("\\P{L}+"))
                 .filter(word -> !word.isBlank())

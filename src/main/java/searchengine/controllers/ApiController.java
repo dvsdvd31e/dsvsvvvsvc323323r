@@ -9,18 +9,17 @@ import searchengine.dto.statistics.StatisticsResponse;
 import searchengine.services.IndexingService;
 import searchengine.services.StatisticsService;
 import searchengine.config.SitesList ;
-import java.util.List;
-import searchengine.config.ConfigSite ;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam ;
-import searchengine.services.PageIndexingService;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
+import searchengine.dto.search.SearchResponse;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+import org.springframework.web.bind.annotation.PostMapping;
+import searchengine.services.PageIndexingService;
+import java.util.concurrent.ExecutorService;
 import searchengine.services.SearchService;
-import searchengine.dto.search.SearchResponse;
 import org.springframework.context.annotation.Lazy;
 
 @RestController
@@ -36,6 +35,7 @@ public class ApiController {
     private final PageIndexingService pageIndexingService;  // Исправленное имя переменной
     private final SearchService searchService;
     private final SitesList sitesList;
+    private boolean indexingInProgress = false;  // Флаг индексации
 
     public ApiController(@Lazy StatisticsService statisticsService,SitesList sitesList,SearchService searchService,@Lazy PageIndexingService pageIndexingService,@Lazy IndexingService indexingService, ExecutorService executorService) {
         this.statisticsService = statisticsService;
@@ -54,35 +54,58 @@ public class ApiController {
 
     @GetMapping("/startIndexing")
     public ResponseEntity<Map<String, Object>> startIndexing() {
-        if (indexingService.isIndexingInProgress()) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("result", false);
-            errorResponse.put("error", "Индексация уже запущена");
-            return ResponseEntity.badRequest().body(errorResponse);
+        // Проверяем, если индексация уже идет
+        if (indexingInProgress) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", false);
+            response.put("error", "Индексация уже запущена");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
         }
 
-        // Запуск асинхронной индексации
-        executorService.submit(indexingService::startFullIndexing);
+        // Устанавливаем флаг, что индексация запущена
+        indexingInProgress = true;
 
-        Map<String, Object> successResponse = new HashMap<>();
-        successResponse.put("result", true);
-        return ResponseEntity.ok(successResponse);
+        try {
+            // Запускаем индексацию асинхронно
+            CompletableFuture.runAsync(() -> {
+                try {
+                    indexingService.startFullIndexing();  // Метод индексации, выполняющий долгую задачу
+                } catch (Exception e) {
+                    // Обработка ошибок внутри индексации (можно логировать ошибки)
+                    System.err.println("Ошибка при индексации: " + e.getMessage());
+                } finally {
+                    // После завершения индексации сбрасываем флаг
+                    indexingInProgress = false;
+                }
+            });
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", true);
+            response.put("message", "Индексация началась асинхронно.");
+            return ResponseEntity.ok(response); // Возвращаем успешный результат
+        } catch (Exception e) {
+            // В случае ошибки сбрасываем флаг индексации
+            indexingInProgress = false;
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", false);
+            response.put("error", "Ошибка при запуске индексации: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response); // Возвращаем ошибку
+        }
     }
 
     @GetMapping("/stopIndexing")
     public ResponseEntity<Map<String, Object>> stopIndexing() {
-        if (!indexingService.isIndexingInProgress()) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("result", false);
-            errorResponse.put("error", "Индексация не запущена");
-            return ResponseEntity.badRequest().body(errorResponse);
+        try {
+            indexingService.stopIndexing();
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", true);
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", false);
+            response.put("error", "Индексация не запущена");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
         }
-
-        indexingService.stopIndexing();
-
-        Map<String, Object> successResponse = new HashMap<>();
-        successResponse.put("result", true);
-        return ResponseEntity.ok(successResponse);
     }
 
 

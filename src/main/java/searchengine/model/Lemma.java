@@ -4,22 +4,12 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
-import lombok.ToString;
-import lombok.EqualsAndHashCode;
-import jakarta.persistence.Index;
-
 
 @Entity
-@Table(name = "lemma", indexes = {
-        @Index(name = "idx_lemma", columnList = "lemma"),
-        @Index(name = "idx_site_id", columnList = "site_id"),
-        @Index(name = "idx_lemma_site", columnList = "lemma, site_id", unique = true) // Уникальный индекс
-})
+@Table(name = "lemma")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = "site")  // Исключает site из toString, чтобы избежать циклических ссылок
-@EqualsAndHashCode(of = {"lemma", "site"})  // Хэшкод по лемме и сайту
 public class Lemma {
 
     @Id
@@ -31,10 +21,11 @@ public class Lemma {
     @JoinColumn(name = "site_id", nullable = false)
     private Site site;
 
-    @Column(name = "lemma", nullable = false, length = 500)
+    @Column(columnDefinition = "VARCHAR(255)", nullable = false)
     private String lemma;
 
-    @Column(name = "frequency", nullable = false)
-    private Integer frequency = 1; // По умолчанию 1, чтобы избежать NULL
+    @Column(nullable = false)
+    private int frequency;
+
 
 }

@@ -3,19 +3,19 @@ package searchengine.services;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-
+import searchengine.config.ConfigSite;
 import searchengine.config.SitesList;
 import searchengine.model.IndexingStatus;
+import searchengine.model.Site;
 import searchengine.repository.PageRepository;
 import searchengine.repository.SiteRepository;
 import java.time.LocalDateTime;
 import java.util.*;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.IndexRepository;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
+
+import java.util.concurrent.*;
+
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -47,24 +47,36 @@ public class IndexingService {
     }
 
     public synchronized void startFullIndexing() {
+        // Проверка, не запущена ли уже индексация
         if (indexingInProgress) {
-            logger.warn("Попытка запустить индексацию, которая уже выполняется.");
-            throw new IllegalStateException("Индексация уже запущена.");
+            logger.warn("Индексация уже запущена. Перезапуск невозможен.");
+            return;
         }
+
+        // Устанавливаем флаг, что индексация началась
         indexingInProgress = true;
         logger.info("Индексация начата.");
 
+        // Создаем executorService для выполнения индексации в отдельном потоке
         executorService = Executors.newSingleThreadExecutor();
+
+        // Запускаем индексацию
         executorService.submit(() -> {
             try {
+                logger.info("Выполняем индексацию...");
                 performIndexing();
             } catch (Exception e) {
                 logger.error("Ошибка во время индексации: ", e);
             } finally {
-                indexingInProgress = false;
-                logger.info("Индексация завершена.");
+                // После завершения индексации сбрасываем флаг
+                synchronized (this) {
+                    indexingInProgress = false;
+                    logger.info("Индексация завершена.");
+                }
             }
         });
+
+        // Закрываем executorService после выполнения всех задач
         executorService.shutdown();
     }
 
@@ -74,8 +86,13 @@ public class IndexingService {
             return;
         }
         logger.info("Остановка индексации по запросу пользователя.");
-        indexingInProgress = false;
 
+        // Сбрасываем флаг индексации
+        synchronized (this) {
+            indexingInProgress = false;
+        }
+
+        // Останавливаем потоки
         if (executorService != null) {
             executorService.shutdownNow();
         }
@@ -85,6 +102,7 @@ public class IndexingService {
 
         updateSitesStatusToFailed("Индексация остановлена пользователем");
     }
+
 
 
     private void performIndexing() {
