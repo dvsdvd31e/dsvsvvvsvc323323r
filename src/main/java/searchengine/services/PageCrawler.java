@@ -12,15 +12,13 @@ import searchengine.model.Index;
 import searchengine.repository.PageRepository;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.IndexRepository;
-import org.apache.lucene.morphology.LuceneMorphology;
-import org.apache.lucene.morphology.russian.RussianLuceneMorphology;
-import org.apache.lucene.morphology.english.EnglishLuceneMorphology;
 import java.io.IOException;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.RecursiveAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import searchengine.utils.LemmaProcessor;
 import java.util.List;
 
 public class PageCrawler extends RecursiveAction {
@@ -32,10 +30,9 @@ public class PageCrawler extends RecursiveAction {
     private final IndexingService indexingService;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
-    private final int maxDepth;
-    private final int currentDepth;
 
-    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService, int maxDepth, int currentDepth) {
+
+    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService) {
         this.site = site;
         this.url = url;
         this.visitedUrls = visitedUrls;
@@ -43,17 +40,11 @@ public class PageCrawler extends RecursiveAction {
         this.indexingService = indexingService;
         this.indexRepository = indexRepository;
         this.lemmaRepository = lemmaRepository;
-        this.maxDepth = maxDepth;
-        this.currentDepth = currentDepth;
+
     }
 
     @Override
     protected void compute() {
-        if (currentDepth > maxDepth) {
-            logger.info("Превышена максимальная глубина для URL: {}", url);
-            return;  // Прерываем выполнение, если глубина больше максимальной
-        }
-
         if (!checkAndLogStopCondition("Начало обработки")) return;
 
         synchronized (visitedUrls) {
@@ -87,6 +78,9 @@ public class PageCrawler extends RecursiveAction {
             Thread.currentThread().interrupt();
         }
     }
+
+
+
 
     private void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
@@ -131,39 +125,30 @@ public class PageCrawler extends RecursiveAction {
         return document.text();
     }
 
-    private Map<String, Integer> lemmatizeText(String text) throws IOException {
+    private Map<String, Integer> lemmatizeText(String text) {
         Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
-        // Используем LuceneMorphology для русского и английского языков
-        LuceneMorphology russianMorph = new RussianLuceneMorphology();
-        LuceneMorphology englishMorph = new EnglishLuceneMorphology();
+        try {
+            // Используем LemmaProcessor для лемматизации
+            LemmaProcessor lemmaProcessor = new LemmaProcessor();
 
-        // Приводим текст к нижнему регистру и разбиваем на слова, игнорируя символы, не являющиеся буквами
-        String[] words = text.toLowerCase().split("[^a-zа-яё]+");
+            // Приводим текст к нижнему регистру и разбиваем на слова, игнорируя символы, не являющиеся буквами
+            List<String> words = lemmaProcessor.extractLemmas(text);
 
-        for (String word : words) {
-            if (word.length() < 2) continue; // Игнорируем слишком короткие слова
-
-            List<String> normalForms = null;
-            // Проверяем, русский ли это текст
-            if (word.matches("[а-яё]+")) {
-                normalForms = russianMorph.getNormalForms(word);
+            // Подсчитываем частоту лемм
+            for (String word : words) {
+                lemmaFrequencies.put(word, lemmaFrequencies.getOrDefault(word, 0) + 1);
             }
-            // Проверяем, английский ли это текст
-            else if (word.matches("[a-z]+")) {
-                normalForms = englishMorph.getNormalForms(word);
-            }
-
-            if (normalForms != null) {
-                // Для каждой нормальной формы увеличиваем частоту
-                for (String lemma : normalForms) {
-                    lemmaFrequencies.put(lemma, lemmaFrequencies.getOrDefault(lemma, 0) + 1);
-                }
-            }
+        } catch (Exception e) {
+            // Логирование или обработка ошибки
+            System.err.println("Ошибка лемматизации текста: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return lemmaFrequencies;
     }
+
+
 
     private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
         int newLemmas = 0;
@@ -212,6 +197,7 @@ public class PageCrawler extends RecursiveAction {
                 page.getPath(), newLemmas, updatedLemmas, savedIndexes);
     }
 
+
     private void processLinks(Document document) {
         Elements links = document.select("a[href]");
         List<PageCrawler> subtasks = new ArrayList<>();
@@ -250,10 +236,7 @@ public class PageCrawler extends RecursiveAction {
             synchronized (visitedUrls) {
                 if (childPath != null && !visitedUrls.contains(childPath)) {
                     visitedUrls.add(childPath);
-                    // Увеличиваем глубину на 1 и передаем новую задачу
-                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository,
-                            childUrl, visitedUrls, pageRepository,
-                            indexingService, maxDepth, currentDepth + 1));
+                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls, pageRepository, indexingService));
                     logger.debug("Добавлена ссылка в обработку: {}", childUrl);
                 } else {
                     logger.debug("Ссылка уже обработана: {}", childUrl);

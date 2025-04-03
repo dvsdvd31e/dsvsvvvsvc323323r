@@ -6,7 +6,7 @@ import org.apache.lucene.morphology.english.EnglishLuceneMorphology;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-
+import java.util.List;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -15,7 +15,6 @@ public class LemmaProcessor {
     private static final Logger logger = LoggerFactory.getLogger(LemmaProcessor.class);
     private final LuceneMorphology russianMorphology;
     private final LuceneMorphology englishMorphology;
-
     private static final Set<String> PARTICLES = Set.of("ПРЕДЛ", "СОЮЗ", "МЕЖД", "ЧАСТ");
 
     public LemmaProcessor() throws Exception {
@@ -31,12 +30,6 @@ public class LemmaProcessor {
                 .collect(Collectors.toList());
     }
 
-    private List<String> splitIntoWords(String text) {
-        return Arrays.stream(text.split("\\P{L}+"))
-                .filter(word -> !word.isBlank())
-                .collect(Collectors.toList());
-    }
-
     private String lemmatizeWord(String word) {
         try {
             if (word.matches(".*[а-яА-Я]+.*")) {
@@ -45,7 +38,8 @@ public class LemmaProcessor {
                 return processLemmas(englishMorphology, word);
             }
         } catch (Exception e) {
-            logger.warn("Ошибка обработки слова: {}", word, e);
+            // Выводим только сообщение об ошибке без стека вызовов
+            System.out.println("Ошибка обработки слова: " + word);
         }
         return null;
     }
@@ -62,4 +56,14 @@ public class LemmaProcessor {
         }
         return null;
     }
+
+
+
+    private List<String> splitIntoWords(String text) {
+        return Arrays.stream(text.split("\\P{L}+"))
+                .filter(word -> !word.isBlank())
+                .collect(Collectors.toList());
+    }
+
+
 }
