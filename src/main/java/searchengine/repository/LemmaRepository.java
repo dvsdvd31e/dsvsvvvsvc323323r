@@ -16,6 +16,7 @@ public interface LemmaRepository extends JpaRepository<Lemma, Long> {
     @Query("SELECT l FROM Lemma l WHERE l.lemma = :lemma")
     List<Lemma> findByLemma(@Param("lemma") String lemma);
 
+    int countBySite(Site site);
 
     @Modifying
     @Transactional

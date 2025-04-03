@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import searchengine.model.Page;
 import org.springframework.data.repository.query.Param;
 import java.util.List;
-
+import searchengine.model.Site;
 
 @Repository
 public interface PageRepository extends JpaRepository<Page, Integer> {
@@ -21,7 +21,7 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
     @Query("SELECT COUNT(p) > 0 FROM Page p WHERE p.path = :path AND p.site.id = :siteId")
     boolean existsByPathAndSiteId(String path, int siteId);
 
-
+    int countBySite(Site site);
 
     @Query("SELECT p FROM Page p WHERE p.id IN " +
             "(SELECT i.page.id FROM Index i WHERE i.lemma.lemma IN :lemmas)")
