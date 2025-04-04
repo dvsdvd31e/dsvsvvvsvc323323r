@@ -17,7 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class IndexingService {
+
     private static final Logger logger = LoggerFactory.getLogger(IndexingService.class);
+
     private final SitesList sitesList;
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
@@ -34,6 +36,7 @@ public class IndexingService {
         this.pageRepository = pageRepository;
         this.indexRepository = indexRepository;
         this.lemmaRepository = lemmaRepository;
+
     }
 
     public synchronized boolean isIndexingInProgress() {
@@ -74,25 +77,49 @@ public class IndexingService {
         executorService.shutdown();
     }
 
-    public synchronized void stopIndexing() {
+    public void stopIndexing() {
         if (!indexingInProgress) {
             System.out.println("Индексация не запущена.");
             return;
         }
 
-        indexingInProgress = false; // Обновляем флаг
+        indexingInProgress = false;
 
-        // Ожидаем завершения всех задач
+        // Прерываем все потоки индексации
+        executorService.shutdownNow();
+        System.out.println("Остановка индексации...");
+
+        // Отменяем все текущие задачи
         for (CompletableFuture<Void> task : runningTasks) {
-            task.cancel(true); // Прерываем задачу
+            task.cancel(true);  // Прерываем задачу
             System.out.println("Задача индексации отменена.");
         }
 
-        // Завершаем выполнение индексации
-        runningTasks.clear();
+        // Ожидаем завершения всех задач, если они не завершены
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                System.out.println("Некоторые задачи не завершились. Принудительное завершение.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();  // В случае прерывания восстановления флага
+        }
+
+        runningTasks.clear();  // Очищаем список активных задач
+
+        // Обновляем статус сайтов
+        List<Site> sites = siteRepository.findAll();
+        for (Site site : sites) {
+            {
+
+                System.out.println("Статус сайта обновлен на FAILED: " + site.getUrl());
+            }
+        }
+
+        // Сбрасываем флаг индексации, чтобы позволить перезапуск
+        indexingInProgress = false;
+
         System.out.println("Индексация остановлена.");
     }
-
 
     private void performIndexing() {
         List<searchengine.config.ConfigSite> sites = sitesList.getSites();
@@ -105,27 +132,21 @@ public class IndexingService {
         try {
             for (searchengine.config.ConfigSite site : sites) {
                 executorService.submit(() -> {
-                    if (!indexingInProgress) {
-                        logger.info("Индексация остановлена. Прекращаем индексацию сайта: {}", site.getUrl());
-                        return; // Прерываем индексацию, если она была остановлена
-                    }
-
                     logger.info("Индексация сайта: {} ({})", site.getName(), site.getUrl());
                     try {
                         deleteSiteData(site.getUrl());
                         searchengine.model.Site newSite = new searchengine.model.Site();
                         newSite.setName(site.getName());
                         newSite.setUrl(site.getUrl());
+                        newSite.setStatus(IndexingStatus.INDEXING);
                         newSite.setStatusTime(LocalDateTime.now());
-                        newSite.setStatus(IndexingStatus.INDEXING);  // Устанавливаем статус в процессе
-
                         siteRepository.save(newSite);
                         crawlAndIndexPages(newSite, site.getUrl());
-
                         if (indexingInProgress) {
                             updateSiteStatus(site.getUrl(), IndexingStatus.INDEXED);
                         } else {
                             logger.warn("Индексация была прервана. Статус сайта {} не обновлен на INDEXED.", site.getName());
+                            updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, "Индексация была прервана.");
                         }
                     } catch (Exception e) {
                         updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
@@ -148,10 +169,8 @@ public class IndexingService {
         }
     }
 
-
-    // Метод для обновления статуса сайта
     private void updateSiteStatus(String url, IndexingStatus status) {
-        updateSiteStatus(url, status, null);  // Если ошибок нет, передаем null
+        updateSiteStatus(url, status, null);  // Если ошибки нет, передаем null
     }
 
     private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
@@ -163,24 +182,24 @@ public class IndexingService {
             }
             site.setStatusTime(LocalDateTime.now());  // Обновляем время статуса
             siteRepository.save(site);  // Сохраняем сайт в базе
-            logger.info("Статус сайта обновлен: {} — {}", url, status);
+            System.out.println("Статус сайта обновлен: " + url + " — " + status);
         }
     }
 
 
-    private void crawlAndIndexPages(Site site, String startUrl) {
+
+    private void crawlAndIndexPages(searchengine.model.Site site, String startUrl) {
         forkJoinPool = new ForkJoinPool();
-
         try {
-            // Запускаем задачу обхода страниц, проверяя флаг остановки индексации
-            if (!indexingInProgress) {
-                logger.info("Индексация остановлена. Прекращаем обход сайта.");
-                return;
-            }
-
-            // Запуск обхода страниц
-            forkJoinPool.invoke(new PageCrawler(site, lemmaRepository, indexRepository, startUrl, new HashSet<>(),
-                    pageRepository, this, 0, 2)); // Пример глубины 2
+            forkJoinPool.invoke(new PageCrawler(
+                    site,
+                    lemmaRepository,  // передаем LemmaRepository
+                    indexRepository,  // передаем IndexRepository
+                    startUrl,
+                    new HashSet<>(),
+                    pageRepository,
+                    this
+            ));
         } finally {
             forkJoinPool.shutdown();
         }

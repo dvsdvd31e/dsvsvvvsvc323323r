@@ -30,13 +30,9 @@ public class PageCrawler extends RecursiveAction {
     private final IndexingService indexingService;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
-    private final int currentDepth;
-    private final int maxDepth;
-    private volatile boolean indexingInProgress = true;
 
-    public PageCrawler(Site site, LemmaRepository lemmaRepository, IndexRepository indexRepository,
-                       String url, Set<String> visitedUrls, PageRepository pageRepository,
-                       IndexingService indexingService, int currentDepth, int maxDepth) {
+
+    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService) {
         this.site = site;
         this.url = url;
         this.visitedUrls = visitedUrls;
@@ -44,19 +40,11 @@ public class PageCrawler extends RecursiveAction {
         this.indexingService = indexingService;
         this.indexRepository = indexRepository;
         this.lemmaRepository = lemmaRepository;
-        this.currentDepth = currentDepth;
-        this.maxDepth = maxDepth;
+
     }
 
     @Override
     protected void compute() {
-        if (currentDepth > maxDepth || !indexingInProgress) {
-            logger.info("Индексация остановлена на глубине {} для URL: {}", currentDepth, url);
-            return;  // Прекращаем выполнение, если глубина превышена или индексация остановлена
-        }
-
-        logger.info("Текущая глубина: {} для URL: {}", currentDepth, url);  // Выводим текущую глубину
-
         if (!checkAndLogStopCondition("Начало обработки")) return;
 
         synchronized (visitedUrls) {
@@ -68,7 +56,7 @@ public class PageCrawler extends RecursiveAction {
         }
 
         try {
-            long delay = 500 + new Random().nextInt(4500);
+            long delay = 6 + new Random().nextInt(66);
             logger.debug("Задержка перед запросом: {} ms для URL: {}", delay, url);
             Thread.sleep(delay);
 
@@ -123,7 +111,7 @@ public class PageCrawler extends RecursiveAction {
             saveLemmasAndIndexes(lemmaFrequencies, page);
 
             logger.info("HTML-страница добавлена: {}", url);
-            processLinks(document);  // Обработка ссылок на текущей странице
+            processLinks(document);
         } else {
             page.setContent("Unhandled content type: " + contentType);
             logger.info("Контент с неизвестным типом добавлен: {}", url);
@@ -219,12 +207,8 @@ public class PageCrawler extends RecursiveAction {
                 page.getPath(), newLemmas, updatedLemmas, savedIndexes);
     }
 
-    private void processLinks(Document document) {
-        if (!indexingInProgress || currentDepth >= maxDepth) {
-            logger.info("Индексация была прервана или достигнута максимальная глубина. Прекращаем обработку ссылок.");
-            return;
-        }
 
+    private void processLinks(Document document) {
         Elements links = document.select("a[href]");
         List<PageCrawler> subtasks = new ArrayList<>();
         for (Element link : links) {
@@ -232,25 +216,44 @@ public class PageCrawler extends RecursiveAction {
 
             String childUrl = link.absUrl("href");
 
-            // Пропускаем ссылки вне основного домена и ограничиваем глубину
+            // Проверяем, что ссылка принадлежит корневому сайту
             if (!childUrl.startsWith(site.getUrl())) {
                 logger.debug("Ссылка {} находится за пределами корневого сайта. Пропускаем.", childUrl);
                 continue;
             }
 
-            // Проверка на максимальную глубину перед добавлением новой задачи
-            if (currentDepth + 1 <= maxDepth && indexingInProgress) {
-                subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls,
-                        pageRepository, indexingService, currentDepth + 1, maxDepth));
-                logger.debug("Добавлена ссылка в обработку: {}", childUrl);
-            } else {
-                logger.debug("Ссылка {} превышает максимальную глубину или индексация была остановлена. Пропускаем.", childUrl);
+            // Обработка JavaScript ссылок
+            if (childUrl.startsWith("javascript:")) {
+                logger.info("Обнаружена JavaScript ссылка: {}", childUrl);
+                continue;
+            }
+
+            // Обработка tel: ссылок
+            if (childUrl.startsWith("tel:")) {
+                logger.info("Обнаружена телефонная ссылка: {}", childUrl);
+                continue;
+            }
+
+            String childPath = null;
+            try {
+                childPath = new URL(childUrl).getPath();
+            } catch (Exception e) {
+                logger.warn("Ошибка извлечения пути из URL: {}", childUrl);
+            }
+
+            synchronized (visitedUrls) {
+                if (childPath != null && !visitedUrls.contains(childPath)) {
+                    visitedUrls.add(childPath);
+                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls, pageRepository, indexingService));
+                    logger.debug("Добавлена ссылка в обработку: {}", childUrl);
+                } else {
+                    logger.debug("Ссылка уже обработана: {}", childUrl);
+                }
             }
         }
-
-        // Выполняем все собранные подзадачи
-        invokeAll(subtasks);  // Вызываем все подзадачи
+        invokeAll(subtasks);
     }
+
 
     private void handleError(IOException e) {
         logger.warn("Ошибка обработки URL {}: {}", url, e.getMessage());
