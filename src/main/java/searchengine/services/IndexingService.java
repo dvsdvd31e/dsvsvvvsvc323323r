@@ -28,6 +28,7 @@ public class IndexingService {
     private final PageRepository pageRepository;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
+    private final Set<CompletableFuture<Void>> runningTasks = Collections.synchronizedSet(new HashSet<>());
 
     private volatile boolean indexingInProgress = false;
     private ExecutorService executorService;
@@ -80,27 +81,48 @@ public class IndexingService {
         executorService.shutdown();
     }
 
-    public synchronized void stopIndexing() {
+    public void stopIndexing() {
         if (!indexingInProgress) {
-            logger.warn("Попытка остановить индексацию, которая не выполняется.");
+            System.out.println("Индексация не запущена.");
             return;
         }
-        logger.info("Остановка индексации по запросу пользователя.");
 
-        // Сбрасываем флаг индексации
-        synchronized (this) {
-            indexingInProgress = false;
+        indexingInProgress = false;
+
+        // Прерываем все потоки индексации
+        executorService.shutdownNow();
+        System.out.println("Остановка индексации...");
+
+        // Отменяем все текущие задачи
+        for (CompletableFuture<Void> task : runningTasks) {
+            task.cancel(true);  // Прерываем задачу
+            System.out.println("Задача индексации отменена.");
         }
 
-        // Останавливаем потоки
-        if (executorService != null) {
-            executorService.shutdownNow();
-        }
-        if (forkJoinPool != null) {
-            forkJoinPool.shutdownNow();
+        // Ожидаем завершения всех задач, если они не завершены
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                System.out.println("Некоторые задачи не завершились. Принудительное завершение.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();  // В случае прерывания восстановления флага
         }
 
-        updateSitesStatusToFailed("Индексация остановлена пользователем");
+        runningTasks.clear();  // Очищаем список активных задач
+
+        // Обновляем статус сайтов
+        List<Site> sites = siteRepository.findAll();
+        for (Site site : sites) {
+            {
+
+                System.out.println("Статус сайта обновлен на FAILED: " + site.getUrl());
+            }
+        }
+
+        // Сбрасываем флаг индексации, чтобы позволить перезапуск
+        indexingInProgress = false;
+
+        System.out.println("Индексация остановлена.");
     }
 
 
@@ -122,17 +144,22 @@ public class IndexingService {
                         searchengine.model.Site newSite = new searchengine.model.Site();
                         newSite.setName(site.getName());
                         newSite.setUrl(site.getUrl());
-                        newSite.setStatus(IndexingStatus.INDEXING);
                         newSite.setStatusTime(LocalDateTime.now());
+                        newSite.setStatus(IndexingStatus.INDEXING);  // Устанавливаем статус в процессе
+
                         siteRepository.save(newSite);
                         crawlAndIndexPages(newSite, site.getUrl());
+
+                        // Обновляем статус сайта после успешной индексации
                         if (indexingInProgress) {
-                            updateSiteStatusToIndexed(newSite);
+                            updateSiteStatus(site.getUrl(), IndexingStatus.INDEXED);
                         } else {
                             logger.warn("Индексация была прервана. Статус сайта {} не обновлен на INDEXED.", site.getName());
                         }
                     } catch (Exception e) {
-                        handleIndexingError(site.getUrl(), e);
+                        // Обрабатываем ошибку и обновляем статус с описанием ошибки
+                        updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
+                        logger.error("Ошибка индексации сайта {}: {}", site.getUrl(), e.getMessage());
                     }
                 });
             }
@@ -151,22 +178,48 @@ public class IndexingService {
         }
     }
 
+    // Метод для обновления статуса сайта
+    private void updateSiteStatus(String url, IndexingStatus status) {
+        updateSiteStatus(url, status, null);  // Если ошибок нет, передаем null
+    }
+
+    private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
+        Site site = siteRepository.findByUrl(url);
+        if (site != null) {
+            site.setStatus(status);  // Устанавливаем новый статус
+            if (errorMessage != null) {
+                site.setLastError(errorMessage);  // Устанавливаем описание ошибки, если оно есть
+            }
+            site.setStatusTime(LocalDateTime.now());  // Обновляем время статуса
+            siteRepository.save(site);  // Сохраняем сайт в базе
+            logger.info("Статус сайта обновлен: {} — {}", url, status);
+        }
+    }
+
+
     private void crawlAndIndexPages(searchengine.model.Site site, String startUrl) {
+        // Создаем пул потоков для асинхронной обработки
         forkJoinPool = new ForkJoinPool();
+
         try {
+            // Запускаем задачу обхода и индексации страниц в пуле
             forkJoinPool.invoke(new PageCrawler(
                     site,
-                    lemmaRepository,  // передаем LemmaRepository
-                    indexRepository,  // передаем IndexRepository
+                    lemmaRepository,  // Передаем LemmaRepository для обработки лемм
+                    indexRepository,  // Передаем IndexRepository для создания индексов
                     startUrl,
                     new HashSet<>(),
                     pageRepository,
-                    this
+                    this,
+                    0,
+                    2
             ));
         } finally {
+            // Завершаем работу пула потоков после выполнения задачи
             forkJoinPool.shutdown();
         }
     }
+
 
     @Transactional
     public void deleteSiteData(String siteUrl) {
@@ -191,32 +244,4 @@ public class IndexingService {
         }
     }
 
-    private void updateSiteStatusToIndexed(searchengine.model.Site site) {
-        site.setStatus(IndexingStatus.INDEXED);
-        site.setStatusTime(LocalDateTime.now());
-        siteRepository.save(site);
-        logger.info("Сайт {} изменил статус на INDEXED.", site.getUrl());
-    }
-
-    private void handleIndexingError(String siteUrl, Exception e) {
-        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
-        if (site != null) {
-            site.setStatus(IndexingStatus.FAILED);
-            site.setLastError(e.getMessage());
-            site.setStatusTime(LocalDateTime.now());
-            siteRepository.save(site);
-            logger.error("Ошибка при индексации сайта {}: {}", site.getUrl(), e.getMessage());
-        }
-    }
-
-    private void updateSitesStatusToFailed(String errorMessage) {
-        List<searchengine.model.Site> sites = siteRepository.findAllByStatus(IndexingStatus.INDEXING);
-        for (searchengine.model.Site site : sites) {
-            site.setStatus(IndexingStatus.FAILED);
-            site.setLastError(errorMessage);
-            site.setStatusTime(LocalDateTime.now());
-            siteRepository.save(site);
-            logger.info("Сайт {} изменил статус на FAILED: {}", site.getUrl(), errorMessage);
-        }
-    }
 }

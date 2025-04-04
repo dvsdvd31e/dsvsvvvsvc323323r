@@ -30,9 +30,12 @@ public class PageCrawler extends RecursiveAction {
     private final IndexingService indexingService;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
+    private final int currentDepth;
+    private final int maxDepth;
 
-
-    public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService) {
+    public PageCrawler(Site site, LemmaRepository lemmaRepository, IndexRepository indexRepository,
+                       String url, Set<String> visitedUrls, PageRepository pageRepository,
+                       IndexingService indexingService, int currentDepth, int maxDepth) {
         this.site = site;
         this.url = url;
         this.visitedUrls = visitedUrls;
@@ -40,11 +43,17 @@ public class PageCrawler extends RecursiveAction {
         this.indexingService = indexingService;
         this.indexRepository = indexRepository;
         this.lemmaRepository = lemmaRepository;
-
+        this.currentDepth = currentDepth;
+        this.maxDepth = maxDepth;
     }
 
     @Override
     protected void compute() {
+        if (currentDepth > maxDepth) {
+            logger.info("Достигнута максимальная глубина. Прекращаем обработку для URL: {}", url);
+            return;
+        }
+
         if (!checkAndLogStopCondition("Начало обработки")) return;
 
         synchronized (visitedUrls) {
@@ -78,9 +87,6 @@ public class PageCrawler extends RecursiveAction {
             Thread.currentThread().interrupt();
         }
     }
-
-
-
 
     private void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
@@ -148,8 +154,6 @@ public class PageCrawler extends RecursiveAction {
         return lemmaFrequencies;
     }
 
-
-
     private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
         int newLemmas = 0;
         int updatedLemmas = 0;
@@ -168,26 +172,41 @@ public class PageCrawler extends RecursiveAction {
             Optional<Lemma> optionalLemma = lemmaRepository.findByLemmaAndSite(lemmaText, page.getSite());
 
             Lemma lemma;
-            if (optionalLemma.isPresent()) {
-                lemma = optionalLemma.get();
-                lemma.setFrequency(lemma.getFrequency() + 1);
-                updatedLemmas++;
-            } else {
-                lemma = new Lemma();
-                lemma.setLemma(lemmaText);
-                lemma.setSite(page.getSite());
-                lemma.setFrequency(1);
-                lemmaRepository.save(lemma);
-                newLemmas++;
-            }
+            try {
+                if (optionalLemma.isPresent()) {
+                    // Если лемма уже существует, обновляем её частоту
+                    lemma = optionalLemma.get();
+                    lemma.setFrequency(lemma.getFrequency() + 1);
+                    lemmaRepository.save(lemma);  // Обновляем лемму
+                    updatedLemmas++;
+                } else {
+                    // Если лемма новая, сохраняем её в базе
+                    lemma = new Lemma();
+                    lemma.setLemma(lemmaText);
+                    lemma.setSite(page.getSite());
+                    lemma.setFrequency(1);
+                    lemmaRepository.save(lemma);
+                    newLemmas++;
+                }
 
-            // Создаем связь между страницей и леммой
-            Index index = new Index();
-            index.setPage(page);
-            index.setLemma(lemma);
-            index.setRank((float) rank);
-            indexRepository.save(index);
-            savedIndexes++;
+                // Создаем связь между страницей и леммой
+                Index index = new Index();
+                index.setPage(page);
+                index.setLemma(lemma);
+                index.setRank((float) rank);
+
+                try {
+                    indexRepository.save(index);  // Сохраняем индекс
+                    savedIndexes++;
+                } catch (org.hibernate.exception.ConstraintViolationException e) {
+                    // Если возникает ошибка дублирования, игнорируем её
+                    logger.warn("Дублирующаяся запись для леммы '{}', пропускаем индекс.", lemmaText);
+                }
+
+            } catch (Exception e) {
+                // Логирование других исключений
+                logger.error("Ошибка при обработке леммы '{}': {}", lemmaText, e.getMessage());
+            }
         }
 
         // Выводим в лог найденные леммы и их количество
@@ -198,7 +217,13 @@ public class PageCrawler extends RecursiveAction {
     }
 
 
+
     private void processLinks(Document document) {
+        if (currentDepth >= maxDepth) {
+            logger.info("Достигнута максимальная глубина. Прекращаем обработку ссылок.");
+            return;
+        }
+
         Elements links = document.select("a[href]");
         List<PageCrawler> subtasks = new ArrayList<>();
         for (Element link : links) {
@@ -206,20 +231,17 @@ public class PageCrawler extends RecursiveAction {
 
             String childUrl = link.absUrl("href");
 
-            // Проверяем, что ссылка принадлежит корневому сайту
             if (!childUrl.startsWith(site.getUrl())) {
                 logger.debug("Ссылка {} находится за пределами корневого сайта. Пропускаем.", childUrl);
                 continue;
             }
 
-            // Обработка JavaScript ссылок
             if (childUrl.startsWith("javascript:")) {
                 logger.info("Обнаружена JavaScript ссылка: {}", childUrl);
                 saveJavaScriptLink(childUrl);
                 continue;
             }
 
-            // Обработка tel: ссылок
             if (childUrl.startsWith("tel:")) {
                 logger.info("Обнаружена телефонная ссылка: {}", childUrl);
                 savePhoneLink(childUrl);
@@ -236,7 +258,8 @@ public class PageCrawler extends RecursiveAction {
             synchronized (visitedUrls) {
                 if (childPath != null && !visitedUrls.contains(childPath)) {
                     visitedUrls.add(childPath);
-                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls, pageRepository, indexingService));
+                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls,
+                            pageRepository, indexingService, currentDepth + 1, maxDepth));
                     logger.debug("Добавлена ссылка в обработку: {}", childUrl);
                 } else {
                     logger.debug("Ссылка уже обработана: {}", childUrl);
