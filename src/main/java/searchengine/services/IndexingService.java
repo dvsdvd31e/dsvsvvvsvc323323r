@@ -13,6 +13,8 @@ import java.util.*;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.IndexRepository;
 import java.util.concurrent.*;
+import org.springframework.beans.factory.annotation.Autowired;
+
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -21,10 +23,15 @@ public class IndexingService {
     private static final Logger logger = LoggerFactory.getLogger(IndexingService.class);
 
     private final SitesList sitesList;
+    @Autowired
     private final SiteRepository siteRepository;
+    @Autowired
     private final PageRepository pageRepository;
+    @Autowired
     private final LemmaRepository lemmaRepository;
+    @Autowired
     private final IndexRepository indexRepository;
+
     private final Set<CompletableFuture<Void>> runningTasks = Collections.synchronizedSet(new HashSet<>());
     private volatile boolean indexingInProgress = false;
     private ExecutorService executorService;
@@ -134,7 +141,8 @@ public class IndexingService {
                 executorService.submit(() -> {
                     logger.info("Индексация сайта: {} ({})", site.getName(), site.getUrl());
                     try {
-                        deleteSiteData(site.getUrl());
+                        // Передаем необходимые репозитории
+                        deleteSiteData(site.getUrl(), siteRepository, indexRepository, lemmaRepository, pageRepository);
                         searchengine.model.Site newSite = new searchengine.model.Site();
                         newSite.setName(site.getName());
                         newSite.setUrl(site.getUrl());
@@ -168,6 +176,29 @@ public class IndexingService {
             }
         }
     }
+
+    @Transactional
+    public static void deleteSiteData(String siteUrl, SiteRepository siteRepository, IndexRepository indexRepository,
+                                      LemmaRepository lemmaRepository, PageRepository pageRepository) {
+        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
+        if (site != null) {
+            Long siteId = (long) site.getId();
+
+            int indexesDeleted = indexRepository.deleteBySiteId(site.getId());
+            int lemmasDeleted = lemmaRepository.deleteBySiteId(siteId);
+            int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
+
+            siteRepository.delete(site);
+
+            logger.info("Удалено {} записей из таблицы index.", indexesDeleted);
+            logger.info("Удалено {} записей из таблицы lemma.", lemmasDeleted);
+            logger.info("Удалено {} записей из таблицы page для сайта {}.", pagesDeleted, siteUrl);
+            logger.info("Сайт {} успешно удален.", siteUrl);
+        } else {
+            logger.warn("Сайт {} не найден в базе данных.", siteUrl);
+        }
+    }
+
 
     private void updateSiteStatus(String url, IndexingStatus status) {
         updateSiteStatus(url, status, null);  // Если ошибки нет, передаем null
@@ -205,27 +236,6 @@ public class IndexingService {
         }
     }
 
-    @Transactional
-    public void deleteSiteData(String siteUrl) {
-        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
-        if (site != null) {
-            Long siteId = (long) site.getId();
 
-            int indexesDeleted = indexRepository.deleteBySiteId(site.getId());
-
-            int lemmasDeleted = lemmaRepository.deleteBySiteId(siteId);
-
-            int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
-
-            siteRepository.delete(site);
-
-            logger.info("Удалено {} записей из таблицы index.", indexesDeleted);
-            logger.info("Удалено {} записей из таблицы lemma.", lemmasDeleted);
-            logger.info("Удалено {} записей из таблицы page для сайта {}.", pagesDeleted, siteUrl);
-            logger.info("Сайт {} успешно удален.", siteUrl);
-        } else {
-            logger.warn("Сайт {} не найден в базе данных.", siteUrl);
-        }
-    }
 
 }

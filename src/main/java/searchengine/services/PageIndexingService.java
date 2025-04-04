@@ -140,12 +140,6 @@ public class PageIndexingService {
         return lemmas;
     }
 
-
-
-
-
-
-    // 🔹 Метод для индексации конкретного сайта
     public boolean indexPage(String baseUrl) {
         long startTime = System.currentTimeMillis();
         Site site = null;
@@ -159,7 +153,7 @@ public class PageIndexingService {
             }
 
             // Удаление старых данных о сайте перед индексацией
-            deleteSiteData(baseUrl);
+            IndexingService.deleteSiteData(baseUrl, siteRepository, indexRepository, lemmaRepository, pageRepository);
 
             // Создаем новую запись о сайте
             site = new Site();
@@ -171,7 +165,7 @@ public class PageIndexingService {
 
             logger.info("🔄 Начинаем индексацию сайта: {}", baseUrl);
             ForkJoinPool forkJoinPool = new ForkJoinPool();
-            forkJoinPool.invoke(new PageCrawler(site, baseUrl));
+            forkJoinPool.invoke(new CrawlerIndex(site, baseUrl));
 
             // 🔹 После успешного завершения меняем статус на INDEXED
             site.setStatus(IndexingStatus.INDEXED);
@@ -196,39 +190,6 @@ public class PageIndexingService {
         }
     }
 
-
-
-
-
-    @Transactional
-    private void deleteSiteData(String siteUrl) {
-        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
-        if (site != null) {
-            Long siteId = (long) site.getId();  // Приведение к Long для LemmaRepository
-
-            // 1. Удаляем все записи из таблицы index (по siteId через page)
-            int indexesDeleted = indexRepository.deleteBySiteId(site.getId());
-
-            // 2. Удаляем все записи из таблицы lemma (по siteId)
-            int lemmasDeleted = lemmaRepository.deleteBySiteId(siteId);
-
-            // 3. Удаляем все страницы, связанные с сайтом
-            int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
-
-            // 4. Удаляем сам сайт
-            siteRepository.delete(site);
-
-            logger.info("Удалено {} записей из таблицы index.", indexesDeleted);
-            logger.info("Удалено {} записей из таблицы lemma.", lemmasDeleted);
-            logger.info("Удалено {} записей из таблицы page для сайта {}.", pagesDeleted, siteUrl);
-            logger.info("Сайт {} успешно удален.", siteUrl);
-        } else {
-            logger.warn("Сайт {} не найден в базе данных.", siteUrl);
-        }
-    }
-
-
-
     private ConfigSite getConfigSiteByUrl(String url) {
         return sitesList.getSites().stream()
                 .filter(site -> site.getUrl().equalsIgnoreCase(url))
@@ -237,11 +198,11 @@ public class PageIndexingService {
     }
 
     // 🔹 Класс для обхода страниц сайта
-    private class PageCrawler extends RecursiveTask<Void> {
+    private class  CrawlerIndex extends RecursiveTask<Void> {
         private final Site site;
         private final String url;
 
-        public PageCrawler(Site site, String url) {
+        public CrawlerIndex(Site site, String url) {
             this.site = site;
             this.url = url;
         }
@@ -293,10 +254,10 @@ public class PageIndexingService {
                 logger.info("✅ [{}] Проиндексировано за {} мс: {}", responseCode, (endTime - startTime), url);
 
                 Elements links = document.select("a[href]");
-                List<PageCrawler> subTasks = links.stream()
+                List<CrawlerIndex> subTasks = links.stream()
                         .map(link -> cleanUrl(link.absUrl("href")))
                         .filter(link -> link.startsWith(site.getUrl()) && !shouldSkipUrl(link))
-                        .map(link -> new PageCrawler(site, link))
+                        .map(link -> new CrawlerIndex(site, link))
                         .toList();
 
                 logger.info("🔗 Найдено ссылок: {}", subTasks.size());
