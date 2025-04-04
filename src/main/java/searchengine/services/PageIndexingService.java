@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import searchengine.model.Page;
 import searchengine.model.Site;
+import searchengine.config.SitesList;
 import java.time.LocalDateTime;
 import searchengine.model.IndexingStatus;
 import searchengine.repository.PageRepository;
@@ -25,9 +26,18 @@ public class PageIndexingService {
     @Autowired
     private SiteRepository siteRepository;
 
+    @Autowired
+    private SitesList sitesList; // Внедрение конфигурации
+
     // Метод для индексации страницы по URL
     public void indexPage(String url) {
         try {
+            // Проверяем, что URL находится в списке сайтов из конфигурации
+            if (!isValidSite(url)) {
+                logger.warn("Сайт с таким URL не найден в списке конфигурации: {}", url);
+                return; // Пропускаем URL, если его нет в конфигурации
+            }
+
             // Извлекаем информацию о сайте по его URL
             Site site = siteRepository.findByUrl(url);
             if (site == null) {
@@ -71,5 +81,11 @@ public class PageIndexingService {
         } catch (IOException e) {
             logger.error("Ошибка при индексации страницы: {}", url, e);
         }
+    }
+
+    // Метод для проверки, есть ли сайт в списке конфигурации
+    private boolean isValidSite(String url) {
+        return sitesList.getSites().stream()
+                .anyMatch(configSite -> configSite.getUrl().equals(url));
     }
 }
