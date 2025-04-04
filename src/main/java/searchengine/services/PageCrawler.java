@@ -32,6 +32,7 @@ public class PageCrawler extends RecursiveAction {
     private final IndexRepository indexRepository;
     private final int currentDepth;
     private final int maxDepth;
+    private volatile boolean indexingInProgress = true;
 
     public PageCrawler(Site site, LemmaRepository lemmaRepository, IndexRepository indexRepository,
                        String url, Set<String> visitedUrls, PageRepository pageRepository,
@@ -49,10 +50,12 @@ public class PageCrawler extends RecursiveAction {
 
     @Override
     protected void compute() {
-        if (currentDepth > maxDepth) {
-            logger.info("Достигнута максимальная глубина. Прекращаем обработку для URL: {}", url);
-            return;
+        if (currentDepth > maxDepth || !indexingInProgress) {
+            logger.info("Индексация остановлена на глубине {} для URL: {}", currentDepth, url);
+            return;  // Прекращаем выполнение, если глубина превышена или индексация остановлена
         }
+
+        logger.info("Текущая глубина: {} для URL: {}", currentDepth, url);  // Выводим текущую глубину
 
         if (!checkAndLogStopCondition("Начало обработки")) return;
 
@@ -120,7 +123,7 @@ public class PageCrawler extends RecursiveAction {
             saveLemmasAndIndexes(lemmaFrequencies, page);
 
             logger.info("HTML-страница добавлена: {}", url);
-            processLinks(document);
+            processLinks(document);  // Обработка ссылок на текущей странице
         } else {
             page.setContent("Unhandled content type: " + contentType);
             logger.info("Контент с неизвестным типом добавлен: {}", url);
@@ -216,11 +219,9 @@ public class PageCrawler extends RecursiveAction {
                 page.getPath(), newLemmas, updatedLemmas, savedIndexes);
     }
 
-
-
     private void processLinks(Document document) {
-        if (currentDepth >= maxDepth) {
-            logger.info("Достигнута максимальная глубина. Прекращаем обработку ссылок.");
+        if (!indexingInProgress || currentDepth >= maxDepth) {
+            logger.info("Индексация была прервана или достигнута максимальная глубина. Прекращаем обработку ссылок.");
             return;
         }
 
@@ -231,75 +232,24 @@ public class PageCrawler extends RecursiveAction {
 
             String childUrl = link.absUrl("href");
 
+            // Пропускаем ссылки вне основного домена и ограничиваем глубину
             if (!childUrl.startsWith(site.getUrl())) {
                 logger.debug("Ссылка {} находится за пределами корневого сайта. Пропускаем.", childUrl);
                 continue;
             }
 
-            if (childUrl.startsWith("javascript:")) {
-                logger.info("Обнаружена JavaScript ссылка: {}", childUrl);
-                saveJavaScriptLink(childUrl);
-                continue;
-            }
-
-            if (childUrl.startsWith("tel:")) {
-                logger.info("Обнаружена телефонная ссылка: {}", childUrl);
-                savePhoneLink(childUrl);
-                continue;
-            }
-
-            String childPath = null;
-            try {
-                childPath = new URL(childUrl).getPath();
-            } catch (Exception e) {
-                logger.warn("Ошибка извлечения пути из URL: {}", childUrl);
-            }
-
-            synchronized (visitedUrls) {
-                if (childPath != null && !visitedUrls.contains(childPath)) {
-                    visitedUrls.add(childPath);
-                    subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls,
-                            pageRepository, indexingService, currentDepth + 1, maxDepth));
-                    logger.debug("Добавлена ссылка в обработку: {}", childUrl);
-                } else {
-                    logger.debug("Ссылка уже обработана: {}", childUrl);
-                }
+            // Проверка на максимальную глубину перед добавлением новой задачи
+            if (currentDepth + 1 <= maxDepth && indexingInProgress) {
+                subtasks.add(new PageCrawler(site, lemmaRepository, indexRepository, childUrl, visitedUrls,
+                        pageRepository, indexingService, currentDepth + 1, maxDepth));
+                logger.debug("Добавлена ссылка в обработку: {}", childUrl);
+            } else {
+                logger.debug("Ссылка {} превышает максимальную глубину или индексация была остановлена. Пропускаем.", childUrl);
             }
         }
-        invokeAll(subtasks);
-    }
 
-    private void savePhoneLink(String telUrl) {
-        String phoneNumber = telUrl.substring(4); // Убираем "tel:"
-        if (pageRepository.existsByPathAndSiteId(phoneNumber, site.getId())) {
-            logger.info("Телефонный номер {} уже сохранён. Пропускаем.", phoneNumber);
-            return;
-        }
-
-        Page page = new Page();
-        page.setSite(site);
-        page.setPath(phoneNumber);
-        page.setCode(0); // Код 0 для телефонных ссылок
-        page.setContent("Телефонный номер: " + phoneNumber);
-        pageRepository.save(page);
-
-        logger.info("Сохранён телефонный номер: {}", phoneNumber);
-    }
-
-    private void saveJavaScriptLink(String jsUrl) {
-        if (pageRepository.existsByPathAndSiteId(jsUrl, site.getId())) {
-            logger.info("JavaScript ссылка {} уже сохранена. Пропускаем.", jsUrl);
-            return;
-        }
-
-        Page page = new Page();
-        page.setSite(site);
-        page.setPath(jsUrl); // Сохраняем полный jsUrl как path
-        page.setCode(0); // Код 0 для JavaScript ссылок
-        page.setContent("JavaScript ссылка: " + jsUrl);
-        pageRepository.save(page);
-
-        logger.info("Сохранена JavaScript ссылка: {}", jsUrl);
+        // Выполняем все собранные подзадачи
+        invokeAll(subtasks);  // Вызываем все подзадачи
     }
 
     private void handleError(IOException e) {
