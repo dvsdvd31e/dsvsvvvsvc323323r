@@ -62,6 +62,4 @@ public class LemmaProcessor {
                 .filter(word -> !word.isBlank())
                 .collect(Collectors.toList());
     }
-
-
 }

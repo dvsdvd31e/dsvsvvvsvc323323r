@@ -31,7 +31,6 @@ public class PageCrawler extends RecursiveAction {
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
 
-
     public PageCrawler(Site site,LemmaRepository lemmaRepository,IndexRepository indexRepository, String url, Set<String> visitedUrls, PageRepository pageRepository, IndexingService indexingService) {
         this.site = site;
         this.url = url;
@@ -79,7 +78,7 @@ public class PageCrawler extends RecursiveAction {
         }
     }
 
-    private void handleResponse(Connection.Response response) throws IOException {
+    public void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
         int statusCode = response.statusCode();
         String path = new URL(url).getPath();
@@ -118,11 +117,7 @@ public class PageCrawler extends RecursiveAction {
         }
     }
 
-    private String extractText(Document document) {
-        return document.text();
-    }
-
-    private Map<String, Integer> lemmatizeText(String text) {
+    public   Map<String, Integer> lemmatizeText(String text) {
         Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
         try {
@@ -143,6 +138,10 @@ public class PageCrawler extends RecursiveAction {
         }
 
         return lemmaFrequencies;
+    }
+
+    private String extractText(Document document) {
+        return document.text();
     }
 
     private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {

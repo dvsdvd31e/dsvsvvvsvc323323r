@@ -15,13 +15,8 @@ public interface SiteRepository extends JpaRepository<Site,List> {
 
     Site findByUrl(String url);
 
-
-
     @Modifying
     @Transactional
     void delete(Site site);
-
-    List<Site> findAllByStatus(IndexingStatus status);
-
 
 }

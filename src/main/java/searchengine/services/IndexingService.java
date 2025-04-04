@@ -14,7 +14,6 @@ import searchengine.repository.LemmaRepository;
 import searchengine.repository.IndexRepository;
 import java.util.concurrent.*;
 import org.springframework.beans.factory.annotation.Autowired;
-
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -199,7 +198,6 @@ public class IndexingService {
         }
     }
 
-
     private void updateSiteStatus(String url, IndexingStatus status) {
         updateSiteStatus(url, status, null);  // Если ошибки нет, передаем null
     }
@@ -217,8 +215,6 @@ public class IndexingService {
         }
     }
 
-
-
     private void crawlAndIndexPages(searchengine.model.Site site, String startUrl) {
         forkJoinPool = new ForkJoinPool();
         try {
@@ -235,7 +231,4 @@ public class IndexingService {
             forkJoinPool.shutdown();
         }
     }
-
-
-
 }

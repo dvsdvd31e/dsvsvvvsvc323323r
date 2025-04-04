@@ -32,6 +32,4 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
     List<Page> findPagesByLemmas(@Param("lemmas") List<String> lemmas, @Param("site") String site);
 
 
-    boolean existsByPath(String path);
-
 }

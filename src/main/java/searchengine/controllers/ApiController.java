@@ -108,6 +108,46 @@ public class ApiController {
         }
     }
 
+    @PostMapping("/indexPage")
+    public ResponseEntity<Map<String, Object>> indexPage(@RequestParam String url) {
+        // Проверяем, если индексация уже идет
+        if (indexingInProgress) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", false);
+            response.put("error", "Индексация уже запущена");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+        }
+
+        // Устанавливаем флаг, что индексация запущена
+        indexingInProgress = true;
+
+        try {
+            // Запускаем индексацию страницы
+            CompletableFuture.runAsync(() -> {
+                try {
+                    pageIndexingService.indexPage(url);  // Метод индексации страницы
+                } catch (Exception e) {
+                    // Логируем ошибку индексации страницы
+                    logger.error("Ошибка при индексации страницы: {}", e.getMessage(), e);
+                } finally {
+                    // После завершения индексации сбрасываем флаг
+                    indexingInProgress = false;
+                }
+            });
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", true);
+            response.put("message", "Индексация страницы началась асинхронно.");
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            // В случае ошибки сбрасываем флаг индексации
+            indexingInProgress = false;
+            Map<String, Object> response = new HashMap<>();
+            response.put("result", false);
+            response.put("error", "Ошибка при запуске индексации страницы: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
 
     @GetMapping("/search")
     public ResponseEntity<SearchResponse> search(
@@ -130,34 +170,4 @@ public class ApiController {
                     .body(new SearchResponse("Ошибка при выполнении поиска"));
         }
     }
-
-
-    @PostMapping("/indexPage")
-    public ResponseEntity<Map<String, Object>> indexPage(@RequestParam String url) {
-        Map<String, Object> response = new HashMap<>();
-
-        if (url == null || url.trim().isEmpty()) {
-            response.put("result", false);
-            response.put("error", "URL не должен быть пустым");
-            return ResponseEntity.badRequest().body(response);
-        }
-
-        try {
-            boolean success = pageIndexingService.indexPage(url);
-            if (success) {
-                response.put("result", true);
-            } else {
-                response.put("result", false);
-                response.put("error", "Не удалось индексировать страницу");
-            }
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            logger.error("Ошибка индексации страницы {}: {}", url, e.getMessage(), e);
-            response.put("result", false);
-            response.put("error", "Внутренняя ошибка сервера");
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
-        }
-    }
-
-
 }
