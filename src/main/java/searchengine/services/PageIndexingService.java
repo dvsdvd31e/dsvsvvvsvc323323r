@@ -7,29 +7,35 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 import searchengine.model.*;
 import searchengine.config.SitesList;
 import java.net.URL;
 import java.time.LocalDateTime;
-
 import searchengine.repository.IndexRepository;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.PageRepository;
 import searchengine.repository.SiteRepository;
 import searchengine.utils.LemmaProcessor;
-
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 
+@Service
 public class PageIndexingService   {
-    private static final Logger logger = LoggerFactory.getLogger(searchengine.services.PageCrawler.class);
+    private static final Logger logger = LoggerFactory.getLogger(PageIndexingService.class);
     private final Site site;
     private final String url;
     private final Set<String> visitedUrls;
     private final PageRepository pageRepository;
     private final IndexingService indexingService;
     private final LemmaRepository lemmaRepository;
+    private ExecutorService executorService;
     private final IndexRepository indexRepository;
+    private ForkJoinPool forkJoinPool;
     private final SiteRepository siteRepository;
     private final SitesList sitesList;
 
@@ -77,7 +83,51 @@ public class PageIndexingService   {
         }
     }
 
+    private void performIndexing() {
+        List<searchengine.config.ConfigSite> sites = sitesList.getSites();
+        if (sites == null || sites.isEmpty()) {
+            logger.warn("Список сайтов для индексации пуст.");
+            return;
+        }
 
+        executorService = Executors.newFixedThreadPool(sites.size());
+        try {
+            for (searchengine.config.ConfigSite site : sites) {
+                executorService.submit(() -> {
+                    logger.info("Индексация сайта: {} ({})", site.getName(), site.getUrl());
+                    try {
+                        // Передаем необходимые репозитории
+                        indexingService.deleteSiteData(site.getUrl(), siteRepository, indexRepository, lemmaRepository, pageRepository);
+                        searchengine.model.Site newSite = new searchengine.model.Site();
+                        newSite.setName(site.getName());
+                        newSite.setUrl(site.getUrl());
+                        newSite.setStatus(IndexingStatus.INDEXING);
+                        newSite.setStatusTime(LocalDateTime.now());
+                        siteRepository.save(newSite);
+
+                        // Удалили метод crawlAndIndexPages
+                        // Теперь просто обновим статус сайта на INDEXED
+                        updateSiteStatus(site.getUrl(), IndexingStatus.INDEXED);
+                    } catch (Exception e) {
+                        updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
+                        logger.error("Ошибка индексации сайта {}: {}", site.getUrl(), e.getMessage());
+                    }
+                });
+            }
+        } finally {
+            executorService.shutdown();
+            try {
+                if (!executorService.awaitTermination(1, TimeUnit.HOURS)) {
+                    executorService.shutdownNow();
+                    logger.error("Превышено время ожидания завершения индексации.");
+                }
+            } catch (InterruptedException e) {
+                executorService.shutdownNow();
+                logger.error("Индексация была прервана: {}", e.getMessage());
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
 
     // Метод для проверки, есть ли сайт в списке конфигурации
     private boolean isValidSite(String url) {
@@ -243,6 +293,26 @@ public class PageIndexingService   {
                     logger.debug("Ссылка уже обработана: {}", childUrl);
                 }
             }
+        }
+    }
+
+
+
+
+    private void updateSiteStatus(String url, IndexingStatus status) {
+        updateSiteStatus(url, status, null);  // Если ошибки нет, передаем null
+    }
+
+    private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
+        Site site = siteRepository.findByUrl(url);
+        if (site != null) {
+            site.setStatus(status);  // Устанавливаем новый статус
+            if (errorMessage != null) {
+                site.setLastError(errorMessage);  // Устанавливаем описание ошибки, если оно есть
+            }
+            site.setStatusTime(LocalDateTime.now());  // Обновляем время статуса
+            siteRepository.save(site);  // Сохраняем сайт в базе
+            System.out.println("Статус сайта обновлен: " + url + " — " + status);
         }
     }
 
