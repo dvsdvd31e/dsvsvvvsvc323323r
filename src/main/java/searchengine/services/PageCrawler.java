@@ -117,7 +117,7 @@ public class PageCrawler extends RecursiveAction {
         }
     }
 
-    public   Map<String, Integer> lemmatizeText(String text) {
+    private    Map<String, Integer> lemmatizeText(String text) {
         Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
         try {

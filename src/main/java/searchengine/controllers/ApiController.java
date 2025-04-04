@@ -149,6 +149,7 @@ public class ApiController {
         }
     }
 
+
     @GetMapping("/search")
     public ResponseEntity<SearchResponse> search(
             @RequestParam String query,
