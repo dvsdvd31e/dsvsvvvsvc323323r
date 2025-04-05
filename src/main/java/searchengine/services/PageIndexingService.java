@@ -8,8 +8,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import searchengine.model.Page;
 import searchengine.model.Site;
-import searchengine.model.Lemma;
-import searchengine.model.Index;
 import searchengine.config.SitesList;
 import searchengine.config.ConfigSite;
 import java.time.LocalDateTime;
@@ -25,7 +23,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.net.URL;
 import org.jsoup.select.Elements;
 import org.jsoup.nodes.Element;
-import searchengine.utils.LemmaProcessor;
 
 @Service
 public class PageIndexingService {
@@ -162,7 +159,7 @@ public class PageIndexingService {
             logger.info("Страница добавлена: {}", url);
 
             Map<String, Integer> lemmaFrequencies = pageCrawler.lemmatizeText(content);
-            saveLemmasAndIndexes(lemmaFrequencies, page);
+            pageCrawler.saveLemmasAndIndexes(lemmaFrequencies, page);
 
             Elements links = document.select("a[href]");
             for (Element link : links) {
@@ -196,57 +193,5 @@ public class PageIndexingService {
         }
     }
 
-    private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
-        int newLemmas = 0;
-        int updatedLemmas = 0;
-        int savedIndexes = 0;
 
-        StringBuilder lemmaLog = new StringBuilder("Найденные леммы: ");
-
-        for (Map.Entry<String, Integer> entry : lemmaFrequencies.entrySet()) {
-            String lemmaText = entry.getKey();
-            int rank = entry.getValue();
-
-            lemmaLog.append(lemmaText).append(" (").append(rank).append("), ");
-
-            Optional<Lemma> optionalLemma = lemmaRepository.findByLemmaAndSite(lemmaText, page.getSite());
-
-            Lemma lemma;
-            try {
-                if (optionalLemma.isPresent()) {
-                    lemma = optionalLemma.get();
-                    lemma.setFrequency(lemma.getFrequency() + 1);
-                    lemmaRepository.save(lemma);
-                    updatedLemmas++;
-                } else {
-                    lemma = new Lemma();
-                    lemma.setLemma(lemmaText);
-                    lemma.setSite(page.getSite());
-                    lemma.setFrequency(1);
-                    lemmaRepository.save(lemma);
-                    newLemmas++;
-                }
-
-                Index index = new Index();
-                index.setPage(page);
-                index.setLemma(lemma);
-                index.setRank((float) rank);
-
-                try {
-                    indexRepository.save(index);
-                    savedIndexes++;
-                } catch (org.hibernate.exception.ConstraintViolationException e) {
-                    logger.warn("Дублирующаяся запись для леммы '{}', пропускаем индекс.", lemmaText);
-                }
-
-            } catch (Exception e) {
-                logger.error("Ошибка при обработке леммы '{}': {}", lemmaText, e.getMessage());
-            }
-        }
-
-        logger.info(lemmaLog.toString());
-
-        logger.info("Страница '{}' обработана. Новых лемм: {}, Обновленных лемм: {}, Связок (индексов): {}",
-                page.getPath(), newLemmas, updatedLemmas, savedIndexes);
-    }
 }

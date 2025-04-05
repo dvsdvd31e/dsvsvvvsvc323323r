@@ -145,7 +145,7 @@ public class PageCrawler extends RecursiveAction {
         return document.text();
     }
 
-    private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
+    public void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
         int newLemmas = 0;
         int updatedLemmas = 0;
         int savedIndexes = 0;
