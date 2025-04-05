@@ -39,12 +39,11 @@ public class SearchServiceImpl implements SearchService {
 
         List<Page> pages;
         if (site == null || site.isEmpty()) {
-            pages = pageRepository.findPagesByLemmas(lemmas);  // Поиск по леммам
+            pages = pageRepository.findPagesByLemmas(lemmas);
         } else {
             pages = pageRepository.findPagesByLemmas(lemmas, site);
         }
 
-        // Отфильтровать страницы по леммам с совпадениями
         List<Page> pagesWithMatches = pages.stream()
                 .filter(page -> hasLemmasMatches(page, lemmas))
                 .collect(Collectors.toList());
@@ -55,7 +54,7 @@ public class SearchServiceImpl implements SearchService {
                         page.getSite().getName(),
                         page.getPath(),
                         page.getTitle(),
-                        generateSnippet(page.getContent(), lemmas, page.getPath()),  // Генерация сниппета с подсветкой лемм
+                        generateSnippet(page.getContent(), lemmas, page.getPath()),
                         calculateRelevance(page, lemmas)
                 ))
                 .sorted((a, b) -> Double.compare(b.getRelevance(), a.getRelevance()))
@@ -66,23 +65,20 @@ public class SearchServiceImpl implements SearchService {
         return new SearchResponse(true, results.size(), results);
     }
 
-    // Метод для фильтрации страниц по наличию лемм
     private boolean hasLemmasMatches(Page page, List<String> lemmas) {
         String content = page.getContent().toLowerCase();
         for (String lemma : lemmas) {
             if (!content.contains(lemma.toLowerCase())) {
-                return false; // Если хотя бы одна лемма не найдена, считаем, что совпадений нет
+                return false;
             }
         }
-        return true; // Все леммы найдены
+        return true;
     }
-
 
     private String generateSnippet(String content, List<String> lemmas, String pagePath) {
         int snippetLength = 200;
         String lowerContent = content.toLowerCase();
 
-        // Ищем позиции лемм в контенте страницы
         List<Integer> lemmaPositions = new ArrayList<>();
         for (String lemma : lemmas) {
             String lowerLemma = lemma.toLowerCase();
@@ -97,13 +93,11 @@ public class SearchServiceImpl implements SearchService {
             return "...Совпадений не найдено...";
         }
 
-        // Лучше выбирать несколько позиций, чтобы гарантировать подходящий фрагмент
-        int start = Math.max(lemmaPositions.get(0) - 50, 0); // Берем первую позицию леммы
+        int start = Math.max(lemmaPositions.get(0) - 50, 0);
         int end = Math.min(start + snippetLength, content.length());
 
         String snippet = content.substring(start, end);
 
-        // Подсвечиваем леммы в сниппете
         for (String lemma : lemmas) {
             String lowerLemma = lemma.toLowerCase();
             snippet = snippet.replaceAll("(?i)" + lowerLemma, "<b><a href=\"" + pagePath + "#match-" + lemma.hashCode() + "\">" + "$0" + "</a></b>");
@@ -112,18 +106,15 @@ public class SearchServiceImpl implements SearchService {
         return "..." + snippet + "...";
     }
 
-
-    // Простой метод для расчета релевантности страницы
     private double calculateRelevance(Page page, List<String> lemmas) {
         String content = page.getContent().toLowerCase();
         double relevance = 0.0;
 
         for (String lemma : lemmas) {
             String lowerLemma = lemma.toLowerCase();
-            relevance += content.split(lowerLemma, -1).length - 1; // Считаем количество вхождений леммы
+            relevance += content.split(lowerLemma, -1).length - 1;
         }
 
-        return relevance; // Число вхождений как показатель релевантности
+        return relevance;
     }
-
 }

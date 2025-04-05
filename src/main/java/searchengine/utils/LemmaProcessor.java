@@ -38,7 +38,6 @@ public class LemmaProcessor {
                 return processLemmas(englishMorphology, word);
             }
         } catch (Exception e) {
-            // Выводим только сообщение об ошибке без стека вызовов
             System.out.println("Ошибка обработки слова: " + word);
         }
         return null;

@@ -21,7 +21,7 @@ public class StatisticsServiceImpl implements StatisticsService {
 
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
-    private final LemmaRepository lemmaRepository; // Добавляем репозиторий лемм
+    private final LemmaRepository lemmaRepository;
     private final SitesList sitesList;
 
     @Override
@@ -39,7 +39,7 @@ public class StatisticsServiceImpl implements StatisticsService {
             item.setName(site.getName());
             item.setUrl(site.getUrl());
             item.setPages(pageRepository.countBySite(site));
-            item.setLemmas(lemmaRepository.countBySite(site)); // Учитываем количество лемм
+            item.setLemmas(lemmaRepository.countBySite(site));
             item.setStatus(site.getStatus().toString());
             item.setError(site.getLastError() != null ? site.getLastError() : "");
             item.setStatusTime(site.getStatusTime().toInstant(ZoneOffset.UTC).toEpochMilli());
@@ -60,24 +60,19 @@ public class StatisticsServiceImpl implements StatisticsService {
         return response;
     }
 
-    // Реализуем метод updateStatistics
     @Override
     public void updateStatistics(StatisticsResponse response) {
-        // Здесь обработка статистики, переданной в response
-        // Например, вы можете обновить данные в базе или сохранить их в другом месте.
         System.out.println("Обновление статистики...");
         System.out.println("Обновленные данные: " + response);
-        // Дополнительная логика для обновления статистики.
     }
 
-    // Реализуем метод updateSiteStatistics
     @Override
     public void updateSiteStatistics(Site site) {
         DetailedStatisticsItem item = new DetailedStatisticsItem();
         item.setName(site.getName());
         item.setUrl(site.getUrl());
         item.setPages(pageRepository.countBySite(site));
-        item.setLemmas(lemmaRepository.countBySite(site)); // Учитываем количество лемм
+        item.setLemmas(lemmaRepository.countBySite(site));
         item.setStatus(site.getStatus().toString());
         item.setError(site.getLastError() != null ? site.getLastError() : "");
         item.setStatusTime(site.getStatusTime().toInstant(ZoneOffset.UTC).toEpochMilli());
@@ -86,7 +81,7 @@ public class StatisticsServiceImpl implements StatisticsService {
         total.setSites(1);  // Один сайт
         total.setPages(item.getPages());
         total.setLemmas(item.getLemmas());
-        total.setIndexing(false); // Здесь можно учитывать в процессе индексации
+        total.setIndexing(false);
 
         StatisticsResponse response = new StatisticsResponse();
         StatisticsData data = new StatisticsData();
@@ -95,8 +90,6 @@ public class StatisticsServiceImpl implements StatisticsService {
         response.setStatistics(data);
         response.setResult(true);
 
-        // Теперь обновляем статистику
-        // Вызываем метод для обновления статистики
         updateStatistics(response);
         System.out.println("Обновление статистики для сайта: " + site.getName());
     }
