@@ -5,10 +5,17 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 
 @Entity
-@Table(name = "site")
+@Table(
+        name = "site",
+        indexes = {@jakarta.persistence.Index(name = "idx_url", columnList = "url")},
+        uniqueConstraints = {@UniqueConstraint(columnNames = "url")}
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -19,7 +26,7 @@ public class Site {
     private int id;
 
     @Enumerated(EnumType.STRING)
-    @Column(columnDefinition = "ENUM('INDEXING', 'INDEXED', 'FAILED')", nullable = false)
+    @Column(nullable = false)
     private IndexingStatus status;
 
     @Column(name = "status_time", nullable = false)
@@ -28,12 +35,13 @@ public class Site {
     @Column(columnDefinition = "TEXT")
     private String lastError;
 
-    @Column(columnDefinition = "VARCHAR(255)", nullable = false, unique = true)
+    @Column(length = 500, nullable = false, unique = true)
     private String url;
 
-    @Column(columnDefinition = "VARCHAR(255)", nullable = false)
+    @Column(length = 500, nullable = false)
     private String name;
 
     @OneToMany(mappedBy = "site", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Page> pages;
+    @JsonIgnore // Если вы хотите игнорировать это поле при сериализации
+    private List<Page> pages = new ArrayList<>();
 }

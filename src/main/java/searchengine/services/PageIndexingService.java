@@ -12,6 +12,7 @@ import searchengine.model.Site;
 import searchengine.model.Lemma;
 import searchengine.model.Index;
 import searchengine.config.SitesList;
+import searchengine.config.ConfigSite;
 import java.time.LocalDateTime;
 import searchengine.model.IndexingStatus;
 import searchengine.repository.PageRepository;
@@ -30,42 +31,43 @@ import java.util.concurrent.RecursiveAction;
 
 @Service
 public class PageIndexingService {
-
     private static final Logger logger = LoggerFactory.getLogger(PageIndexingService.class);
-
     @Autowired
     private LemmaRepository lemmaRepository;
-
     @Autowired
     private IndexRepository indexRepository;
-
     @Autowired
     private PageRepository pageRepository;
-
     @Autowired
     private SiteRepository siteRepository;
-
     @Autowired
     private SitesList sitesList;
-
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
     private final ForkJoinPool forkJoinPool = new ForkJoinPool();
 
     public void indexPage(String url) {
-        if (!isValidSite(url)) {
+        Optional<ConfigSite> optionalConfigSite = sitesList.getSites().stream()
+                .filter(configSite -> configSite.getUrl().equals(url))
+                .findFirst();
+
+        if (optionalConfigSite.isEmpty()) {
             logger.warn("Сайт с таким URL не найден в конфигурации: {}", url);
             return;
         }
+
+        ConfigSite configSite = optionalConfigSite.get();
 
         // Очистка данных
         deleteSiteData(url);
 
         // Создание новой записи сайта
         Site site = new Site();
-        site.setUrl(url);
-        site.setName("Unknown Site");
+        site.setUrl(configSite.getUrl());
+        site.setName(configSite.getName()); // <-- используем имя из конфигурации
         site.setStatus(IndexingStatus.INDEXING);
         site.setStatusTime(LocalDateTime.now());
+
+        // Сохраняем в базе данных
         siteRepository.save(site);
         logger.info("Добавлен новый сайт в индексацию: {}", url);
 
@@ -76,6 +78,8 @@ public class PageIndexingService {
         forkJoinPool.invoke(new PageIndexingTask(url, site));
     }
 
+
+
     @Transactional
     private void deleteSiteData(String siteUrl) {
         searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
@@ -83,9 +87,7 @@ public class PageIndexingService {
             Long siteId = (long) site.getId();
 
             int indexesDeleted = indexRepository.deleteBySiteId(site.getId());
-
             int lemmasDeleted = lemmaRepository.deleteBySiteId(siteId);
-
             int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
 
             siteRepository.delete(site);
@@ -149,8 +151,8 @@ public class PageIndexingService {
                     logger.info("Страница добавлена: {}", url);
 
                     // Лемматизация текста страницы и сохранение лемм в базу данных
-                    Map<String, Integer> lemmaFrequencies = lemmatizeText(content);  // Correct method to get lemmatized words with frequency
-                    saveLemmasAndIndexes(lemmaFrequencies, page);  // Pass the lemma frequencies map here
+                    Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
+                    saveLemmasAndIndexes(lemmaFrequencies, page);
                 }
 
                 // Извлекаем ссылки
@@ -180,8 +182,7 @@ public class PageIndexingService {
             }
         }
 
-
-        private    Map<String, Integer> lemmatizeText(String text) {
+        private Map<String, Integer> lemmatizeText(String text) {
             Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
             try {
@@ -197,8 +198,7 @@ public class PageIndexingService {
                 }
             } catch (Exception e) {
                 // Логирование или обработка ошибки
-                System.err.println("Ошибка лемматизации текста: " + e.getMessage());
-                e.printStackTrace();
+                logger.error("Ошибка лемматизации текста: {}", e.getMessage());
             }
 
             return lemmaFrequencies;
