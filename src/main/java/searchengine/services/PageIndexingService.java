@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import searchengine.model.Page;
 import searchengine.model.Site;
 import searchengine.config.SitesList;
@@ -16,8 +17,8 @@ import searchengine.repository.SiteRepository;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.List;
+import java.util.ArrayList;
 import java.net.URL;
 import org.jsoup.select.Elements;
 import org.jsoup.nodes.Element;
@@ -39,8 +40,7 @@ public class PageIndexingService {
     private SitesList sitesList;
 
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
-    private final BlockingQueue<String> urlQueue = new LinkedBlockingQueue<>();
-    private final ExecutorService executor = Executors.newFixedThreadPool(10); // 10 потоков
+    private final ForkJoinPool forkJoinPool = new ForkJoinPool();
 
     public void indexPage(String url) {
         if (!isValidSite(url)) {
@@ -48,73 +48,36 @@ public class PageIndexingService {
             return;
         }
 
-        Site site = siteRepository.findByUrl(url);
+        // Очистка данных
+        deleteSiteData(url);
 
-        if (site == null) {
-            site = new Site(); // присваиваем напрямую в site
-            site.setUrl(url);
-            site.setName("Unknown Site");
-            site.setStatus(IndexingStatus.INDEXING);
-            site.setStatusTime(LocalDateTime.now());
-            siteRepository.save(site);
-            logger.info("Добавлен новый сайт в индексацию: {}", url);
-        }
+        // Создание новой записи сайта
+        Site site = new Site();
+        site.setUrl(url);
+        site.setName("Unknown Site");
+        site.setStatus(IndexingStatus.INDEXING);
+        site.setStatusTime(LocalDateTime.now());
+        siteRepository.save(site);
+        logger.info("Добавлен новый сайт в индексацию: {}", url);
 
-        // Добавляем стартовый URL в очередь
-        urlQueue.add(url);
+        // Очистка посещённых ссылок (на случай повторной индексации)
+        visitedUrls.clear();
 
-        // Запускаем 10 потоков, которые будут обрабатывать queue
-        for (int i = 0; i < 10; i++) {
-            Site finalSite = site; // effectively final для использования в лямбде
-            executor.submit(() -> crawlSite(finalSite));
-        }
+        // Запуск ForkJoinTask
+        forkJoinPool.invoke(new PageIndexingTask(url, site));
     }
 
-
-
-    private void crawlSite(Site site) {
-        while (true) {
-            try {
-                String url = urlQueue.take(); // Ожидаем URL (поток не завершится, пока есть задачи)
-                if (!visitedUrls.add(url)) {
-                    continue; // Пропускаем уже посещённые страницы
-                }
-                processPage(site, url);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.error("Ошибка в потоке обхода", e);
-                break;
-            }
-        }
-    }
-
-    private void processPage(Site site, String url) {
-        try {
-            Document document = Jsoup.connect(url).get();
-            String title = document.title();
-            String content = document.html();
-            String path = new URL(url).getPath();
-
-            if (!pageRepository.existsByPathAndSiteId(path, site.getId())) {
-                Page page = new Page();
-                page.setSite(site);
-                page.setPath(path);
-                page.setContent(content);
-                page.setCode(200);
-                page.setTitle(title);
-                pageRepository.save(page);
-                logger.info("Страница добавлена: {}", url);
-            }
-
-            Elements links = document.select("a[href]");
-            for (Element link : links) {
-                String absUrl = link.absUrl("href");
-                if (isValidInternalUrl(absUrl, site.getUrl())) {
-                    urlQueue.add(absUrl);
-                }
-            }
-        } catch (IOException e) {
-            logger.error("Ошибка при индексации страницы: {}", url, e);
+    @Transactional
+    private void deleteSiteData(String siteUrl) {
+        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
+        if (site != null) {
+            Long siteId = (long) site.getId();
+            int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
+            siteRepository.delete(site);
+            logger.info("Удалено {} записей из таблицы page для сайта {}.", pagesDeleted, siteUrl);
+            logger.info("Сайт {} успешно удален.", siteUrl);
+        } else {
+            logger.warn("Сайт {} не найден в базе данных.", siteUrl);
         }
     }
 
@@ -125,5 +88,59 @@ public class PageIndexingService {
 
     private boolean isValidInternalUrl(String url, String baseUrl) {
         return url.startsWith(baseUrl) && !url.contains("#") && !url.endsWith(".pdf") && !url.endsWith(".jpg");
+    }
+
+    private class PageIndexingTask extends RecursiveAction {
+        private final String url;
+        private final Site site;
+
+        public PageIndexingTask(String url, Site site) {
+            this.url = url;
+            this.site = site;
+        }
+
+        @Override
+        protected void compute() {
+            if (!visitedUrls.add(url)) {
+                return;
+            }
+
+            try {
+                Document document = Jsoup.connect(url)
+                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .referrer("https://www.google.com")
+                        .get();
+
+                String title = document.title();
+                String content = document.html();
+                String path = new URL(url).getPath();
+
+                if (!pageRepository.existsByPathAndSiteId(path, site.getId())) {
+                    Page page = new Page();
+                    page.setSite(site);
+                    page.setPath(path);
+                    page.setContent(content);
+                    page.setCode(200);
+                    page.setTitle(title);
+                    pageRepository.save(page);
+                    logger.info("Страница добавлена: {}", url);
+                }
+
+                Elements links = document.select("a[href]");
+                List<PageIndexingTask> subtasks = new ArrayList<>();
+
+                for (Element link : links) {
+                    String absUrl = link.absUrl("href");
+                    if (isValidInternalUrl(absUrl, site.getUrl())) {
+                        subtasks.add(new PageIndexingTask(absUrl, site));
+                    }
+                }
+
+                invokeAll(subtasks);
+
+            } catch (IOException e) {
+                logger.error("Ошибка при индексации страницы: {}", url, e);
+            }
+        }
     }
 }
