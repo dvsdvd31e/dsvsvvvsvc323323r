@@ -48,16 +48,15 @@ public class PageIndexingService {
             return;
         }
 
-        // Делаем site effectively final
-        final Site site = siteRepository.findByUrl(url);
+        Site site = siteRepository.findByUrl(url);
 
         if (site == null) {
-            Site newSite = new Site();
-            newSite.setUrl(url);
-            newSite.setName("Unknown Site");
-            newSite.setStatus(IndexingStatus.INDEXING);
-            newSite.setStatusTime(LocalDateTime.now());
-            siteRepository.save(newSite);
+            site = new Site(); // присваиваем напрямую в site
+            site.setUrl(url);
+            site.setName("Unknown Site");
+            site.setStatus(IndexingStatus.INDEXING);
+            site.setStatusTime(LocalDateTime.now());
+            siteRepository.save(site);
             logger.info("Добавлен новый сайт в индексацию: {}", url);
         }
 
@@ -66,9 +65,11 @@ public class PageIndexingService {
 
         // Запускаем 10 потоков, которые будут обрабатывать queue
         for (int i = 0; i < 10; i++) {
-            executor.submit(() -> crawlSite(site));
+            Site finalSite = site; // effectively final для использования в лямбде
+            executor.submit(() -> crawlSite(finalSite));
         }
     }
+
 
 
     private void crawlSite(Site site) {
