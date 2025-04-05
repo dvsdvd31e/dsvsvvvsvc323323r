@@ -57,7 +57,6 @@ public class PageCrawler extends RecursiveAction {
         try {
             String path = new URL(url).getPath();
 
-            // Пропускаем, если страница уже проиндексирована
             if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
                 logger.info("Пропускаем ранее проиндексированную страницу: {}", url);
                 return;
@@ -86,13 +85,11 @@ public class PageCrawler extends RecursiveAction {
         }
     }
 
-
     public void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
         int statusCode = response.statusCode();
         String path = new URL(url).getPath();
 
-        // Проверяем, есть ли страница в базе
         if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
             logger.info("Страница {} уже существует. Пропускаем сохранение.", url);
             return;
@@ -111,11 +108,9 @@ public class PageCrawler extends RecursiveAction {
             String text = extractText(document);
             Map<String, Integer> lemmaFrequencies = lemmatizeText(text);
 
-            // Сохраняем страницу
             page.setContent(text);
             pageRepository.save(page);
 
-            // Сохраняем леммы и индексы
             saveLemmasAndIndexes(lemmaFrequencies, page);
 
             logger.info("HTML-страница добавлена: {}", url);
@@ -130,18 +125,14 @@ public class PageCrawler extends RecursiveAction {
         Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
         try {
-            // Используем LemmaProcessor для лемматизации
             LemmaProcessor lemmaProcessor = new LemmaProcessor();
 
-            // Приводим текст к нижнему регистру и разбиваем на слова, игнорируя символы, не являющиеся буквами
             List<String> words = lemmaProcessor.extractLemmas(text);
 
-            // Подсчитываем частоту лемм
             for (String word : words) {
                 lemmaFrequencies.put(word, lemmaFrequencies.getOrDefault(word, 0) + 1);
             }
         } catch (Exception e) {
-            // Логирование или обработка ошибки
             System.err.println("Ошибка лемматизации текста: " + e.getMessage());
             e.printStackTrace();
         }
@@ -164,22 +155,18 @@ public class PageCrawler extends RecursiveAction {
             String lemmaText = entry.getKey();
             int rank = entry.getValue();
 
-            // Добавляем лемму в лог
             lemmaLog.append(lemmaText).append(" (").append(rank).append("), ");
 
-            // Проверяем, есть ли лемма в базе
             Optional<Lemma> optionalLemma = lemmaRepository.findByLemmaAndSite(lemmaText, page.getSite());
 
             Lemma lemma;
             try {
                 if (optionalLemma.isPresent()) {
-                    // Если лемма уже существует, обновляем её частоту
                     lemma = optionalLemma.get();
                     lemma.setFrequency(lemma.getFrequency() + 1);
-                    lemmaRepository.save(lemma);  // Обновляем лемму
+                    lemmaRepository.save(lemma);
                     updatedLemmas++;
                 } else {
-                    // Если лемма новая, сохраняем её в базе
                     lemma = new Lemma();
                     lemma.setLemma(lemmaText);
                     lemma.setSite(page.getSite());
@@ -188,33 +175,28 @@ public class PageCrawler extends RecursiveAction {
                     newLemmas++;
                 }
 
-                // Создаем связь между страницей и леммой
                 Index index = new Index();
                 index.setPage(page);
                 index.setLemma(lemma);
                 index.setRank((float) rank);
 
                 try {
-                    indexRepository.save(index);  // Сохраняем индекс
+                    indexRepository.save(index);
                     savedIndexes++;
                 } catch (org.hibernate.exception.ConstraintViolationException e) {
-                    // Если возникает ошибка дублирования, игнорируем её
                     logger.warn("Дублирующаяся запись для леммы '{}', пропускаем индекс.", lemmaText);
                 }
 
             } catch (Exception e) {
-                // Логирование других исключений
                 logger.error("Ошибка при обработке леммы '{}': {}", lemmaText, e.getMessage());
             }
         }
 
-        // Выводим в лог найденные леммы и их количество
         logger.info(lemmaLog.toString());
 
         logger.info("Страница '{}' обработана. Новых лемм: {}, Обновленных лемм: {}, Связок (индексов): {}",
                 page.getPath(), newLemmas, updatedLemmas, savedIndexes);
     }
-
 
     private void processLinks(Document document) {
         Elements links = document.select("a[href]");
@@ -224,19 +206,16 @@ public class PageCrawler extends RecursiveAction {
 
             String childUrl = link.absUrl("href");
 
-            // Проверяем, что ссылка принадлежит корневому сайту
             if (!childUrl.startsWith(site.getUrl())) {
                 logger.debug("Ссылка {} находится за пределами корневого сайта. Пропускаем.", childUrl);
                 continue;
             }
 
-            // Обработка JavaScript ссылок
             if (childUrl.startsWith("javascript:")) {
                 logger.info("Обнаружена JavaScript ссылка: {}", childUrl);
                 continue;
             }
 
-            // Обработка tel: ссылок
             if (childUrl.startsWith("tel:")) {
                 logger.info("Обнаружена телефонная ссылка: {}", childUrl);
                 continue;
