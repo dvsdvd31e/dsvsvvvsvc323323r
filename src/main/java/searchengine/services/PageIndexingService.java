@@ -57,28 +57,36 @@ public class PageIndexingService {
 
         ConfigSite configSite = optionalConfigSite.get();
 
-        // Очистка данных
         deleteSiteData(url);
 
-        // Создание новой записи сайта
         Site site = new Site();
         site.setUrl(configSite.getUrl());
-        site.setName(configSite.getName()); // <-- используем имя из конфигурации
+        site.setName(configSite.getName());
         site.setStatus(IndexingStatus.INDEXING);
         site.setStatusTime(LocalDateTime.now());
-
-        // Сохраняем в базе данных
         siteRepository.save(site);
+
         logger.info("Добавлен новый сайт в индексацию: {}", url);
 
-        // Очистка посещённых ссылок (на случай повторной индексации)
         visitedUrls.clear();
 
-        // Запуск ForkJoinTask
-        forkJoinPool.invoke(new PageIndexingTask(url, site));
+        try {
+            forkJoinPool.invoke(new PageIndexingTask(url, site));
+
+            // ⬇️ Индексация прошла успешно — обновим статус
+            site.setStatus(IndexingStatus.INDEXED);
+            site.setStatusTime(LocalDateTime.now());
+            site.setLastError(null);
+            siteRepository.save(site);
+            logger.info("Индексация завершена успешно для сайта: {}", url);
+
+        } catch (Exception e) {
+            site.setLastError("Ошибка при выполнении индексации: " + e.getMessage());
+            site.setStatusTime(LocalDateTime.now());
+            siteRepository.save(site);
+            logger.error("Индексация завершилась с ошибкой: {}", e.getMessage(), e);
+        }
     }
-
-
 
     @Transactional
     private void deleteSiteData(String siteUrl) {
@@ -101,15 +109,6 @@ public class PageIndexingService {
         }
     }
 
-    private boolean isValidSite(String url) {
-        return sitesList.getSites().stream()
-                .anyMatch(configSite -> configSite.getUrl().equals(url));
-    }
-
-    private boolean isValidInternalUrl(String url, String baseUrl) {
-        return url.startsWith(baseUrl) && !url.contains("#") && !url.endsWith(".pdf") && !url.endsWith(".jpg");
-    }
-
     private class PageIndexingTask extends RecursiveAction {
         private final String url;
         private final Site site;
@@ -119,23 +118,63 @@ public class PageIndexingService {
             this.site = site;
         }
 
+        private boolean isValidInternalUrl(String url, String baseUrl) {
+            // Проверка, если URL соответствует паттерну /institute/staff/{что-то}
+            if (url.matches(".*\\/institute\\/staff\\/[^\\/]+")) {
+                return true;  // Пропускаем такие URL
+            }
+
+            // Проверка, если в URL содержится дата, игнорируем такую ссылку
+            if (url.matches(".*\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{2}:\\d{2}.*")) {
+                return false;
+            }
+
+            return url.startsWith(baseUrl) &&
+                    !url.contains("#") &&
+                    !url.matches(".*\\.(pdf|jpg|jpeg|png|gif|docx|doc|xlsx|xls|zip|tar|rar|mp3|mp4|avi|exe|mrs1\\.fig|nc|dat|ppt|pptx)(\\?.*)?$") &&
+                    !url.matches(".*[\\sА-Яа-яЁё].*");
+        }
+
         @Override
         protected void compute() {
             if (!visitedUrls.add(url)) {
-                return;
+                return;  // Пропускаем, если URL уже был обработан
             }
 
             try {
                 // Генерация случайной задержки между 0,5 и 5 секундами
-                int delay = (int) (6 + Math.random() * 66);  // задержка в диапазоне от 500 мс до 5000 мс
+                int delay = (int) (1 + Math.random() * 1);  // задержка в диапазоне от 500 мс до 5000 мс
                 Thread.sleep(delay);  // Пауза
 
+                // Проверка расширения URL и пропуск не HTML файлов
+                if (!isValidInternalUrl(url, site.getUrl())) {
+                    logger.info("Пропускаем страницу (не HTML или неподдерживаемый формат): {}", url);
+                    return;  // Пропускаем страницу, если это не HTML или неподдерживаемый формат
+                }
+
                 // Запрос страницы
-                Document document = Jsoup.connect(url)
+                org.jsoup.Connection.Response response = Jsoup.connect(url)
                         .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .referrer("https://www.google.com")
-                        .get();
+                        .execute();  // Получаем Response
 
+                int statusCode = response.statusCode();
+                if (statusCode != 200) {
+                    logger.warn("Ошибка при доступе к странице {}: HTTP статус {}", url, statusCode);
+                    return;  // Пропускаем страницу с ошибочным статусом
+                }
+
+                // Проверяем MIME тип контента и пропускаем если это не HTML
+                String contentType = response.contentType();
+                if (contentType == null || !contentType.contains("text/html")) {
+                    logger.info("Пропускаем страницу (не HTML, content-type: {}): {}", contentType, url);
+                    return;  // Пропускаем страницы, если контент не HTML
+                }
+
+                // Получаем Document из Response
+                Document document = response.parse();
+
+                // Проводим дальнейшую обработку только для HTML страниц
                 String title = document.title();
                 String content = document.body().text();  // Только текстовая часть страницы
                 String path = new URL(url).getPath();
@@ -169,18 +208,31 @@ public class PageIndexingService {
                 // Запускаем новые задачи для ссылок
                 invokeAll(subtasks);
 
-                // После завершения обхода, обновляем статус на INDEXED
-                updateSiteStatus(site, IndexingStatus.INDEXED, null);
-
             } catch (IOException e) {
                 logger.error("Ошибка при индексации страницы: {}", url, e);
-                updateSiteStatus(site, IndexingStatus.FAILED, e.getMessage());
+                updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();  // Восстанавливаем флаг прерывания
                 logger.error("Ошибка в потоке индексации, прерывание выполнения", e);
-                updateSiteStatus(site, IndexingStatus.FAILED, e.getMessage());
+                updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
             }
         }
+
+
+
+        private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
+            Site site = siteRepository.findByUrl(url);
+            if (site != null) {
+                site.setStatus(status);  // Устанавливаем новый статус
+                if (errorMessage != null) {
+                    site.setLastError(errorMessage);  // Устанавливаем описание ошибки, если оно есть
+                }
+                site.setStatusTime(LocalDateTime.now());  // Обновляем время статуса
+                siteRepository.save(site);  // Сохраняем сайт в базе
+                System.out.println("Статус сайта обновлен: " + url + " — " + status);
+            }
+        }
+
 
         private Map<String, Integer> lemmatizeText(String text) {
             Map<String, Integer> lemmaFrequencies = new HashMap<>();
@@ -266,17 +318,6 @@ public class PageIndexingService {
                     page.getPath(), newLemmas, updatedLemmas, savedIndexes);
         }
 
-        // Обновление статуса сайта
-        private void updateSiteStatus(Site site, IndexingStatus status, String errorMessage) {
-            site.setStatus(status);
-            site.setStatusTime(LocalDateTime.now());
 
-            if (errorMessage != null) {
-                site.setLastError(errorMessage);
-            }
-
-            siteRepository.save(site);
-            logger.info("Статус сайта {} изменён на {}", site.getUrl(), status);
-        }
     }
 }
