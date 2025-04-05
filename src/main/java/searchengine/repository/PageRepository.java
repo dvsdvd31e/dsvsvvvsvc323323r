@@ -25,7 +25,7 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
 
     @Query("SELECT p FROM Page p WHERE p.id IN " +
             "(SELECT i.page.id FROM Index i WHERE i.lemma.lemma IN :lemmas)")
-    List<Page> findPagesByLemmas(@Param("lemmas") List<String> lemmas); // 🔹 Без указания сайта
+    List<Page> findPagesByLemmas(@Param("lemmas") List<String> lemmas);
 
     @Query("SELECT p FROM Page p WHERE p.site.url = :site AND p.id IN " +
             "(SELECT i.page.id FROM Index i WHERE i.lemma.lemma IN :lemmas)")

@@ -44,20 +44,16 @@ public class IndexingService {
     }
 
     public synchronized void startFullIndexing() {
-        // Проверка, не запущена ли уже индексация
         if (indexingInProgress) {
             logger.warn("Индексация уже запущена. Перезапуск невозможен.");
             return;
         }
 
-        // Устанавливаем флаг, что индексация началась
         indexingInProgress = true;
         logger.info("Индексация начата.");
 
-        // Создаем executorService для выполнения индексации в отдельном потоке
         executorService = Executors.newSingleThreadExecutor();
 
-        // Запускаем индексацию
         executorService.submit(() -> {
             try {
                 logger.info("Выполняем индексацию...");
@@ -65,15 +61,12 @@ public class IndexingService {
             } catch (Exception e) {
                 logger.error("Ошибка во время индексации: ", e);
             } finally {
-                // После завершения индексации сбрасываем флаг
                 synchronized (this) {
                     indexingInProgress = false;
                     logger.info("Индексация завершена.");
                 }
             }
         });
-
-        // Закрываем executorService после выполнения всех задач
         executorService.shutdown();
     }
 
@@ -85,28 +78,24 @@ public class IndexingService {
 
         indexingInProgress = false;
 
-        // Прерываем все потоки индексации
         executorService.shutdownNow();
         System.out.println("Остановка индексации...");
 
-        // Отменяем все текущие задачи
         for (CompletableFuture<Void> task : runningTasks) {
-            task.cancel(true);  // Прерываем задачу
+            task.cancel(true);
             System.out.println("Задача индексации отменена.");
         }
 
-        // Ожидаем завершения всех задач, если они не завершены
         try {
             if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
                 System.out.println("Некоторые задачи не завершились. Принудительное завершение.");
             }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();  // В случае прерывания восстановления флага
+            Thread.currentThread().interrupt();
         }
 
-        runningTasks.clear();  // Очищаем список активных задач
+        runningTasks.clear();
 
-        // Обновляем статус сайтов
         List<Site> sites = siteRepository.findAll();
         for (Site site : sites) {
             {
@@ -115,7 +104,6 @@ public class IndexingService {
             }
         }
 
-        // Сбрасываем флаг индексации, чтобы позволить перезапуск
         indexingInProgress = false;
 
         System.out.println("Индексация остановлена.");
@@ -170,31 +158,29 @@ public class IndexingService {
     }
 
     private void updateSiteStatus(String url, IndexingStatus status) {
-        updateSiteStatus(url, status, null);  // Если ошибки нет, передаем null
+        updateSiteStatus(url, status, null);
     }
 
     private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
         Site site = siteRepository.findByUrl(url);
         if (site != null) {
-            site.setStatus(status);  // Устанавливаем новый статус
+            site.setStatus(status);
             if (errorMessage != null) {
-                site.setLastError(errorMessage);  // Устанавливаем описание ошибки, если оно есть
+                site.setLastError(errorMessage);
             }
-            site.setStatusTime(LocalDateTime.now());  // Обновляем время статуса
-            siteRepository.save(site);  // Сохраняем сайт в базе
+            site.setStatusTime(LocalDateTime.now());
+            siteRepository.save(site);
             System.out.println("Статус сайта обновлен: " + url + " — " + status);
         }
     }
-
-
 
     private void crawlAndIndexPages(searchengine.model.Site site, String startUrl) {
         forkJoinPool = new ForkJoinPool();
         try {
             forkJoinPool.invoke(new PageCrawler(
                     site,
-                    lemmaRepository,  // передаем LemmaRepository
-                    indexRepository,  // передаем IndexRepository
+                    lemmaRepository,
+                    indexRepository,
                     startUrl,
                     new HashSet<>(),
                     pageRepository,
@@ -227,5 +213,4 @@ public class IndexingService {
             logger.warn("Сайт {} не найден в базе данных.", siteUrl);
         }
     }
-
 }

@@ -13,13 +13,13 @@ import jakarta.persistence.Index;
 @Table(name = "lemma", indexes = {
         @Index(name = "idx_lemma", columnList = "lemma"),
         @Index(name = "idx_site_id", columnList = "site_id"),
-        @Index(name = "idx_lemma_site", columnList = "lemma, site_id", unique = true) // Уникальный индекс
+        @Index(name = "idx_lemma_site", columnList = "lemma, site_id", unique = true)
 })
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = "site")  // Исключает site из toString, чтобы избежать циклических ссылок
-@EqualsAndHashCode(of = {"lemma", "site"})  // Хэшкод по лемме и сайту
+@ToString(exclude = "site")
+@EqualsAndHashCode(of = {"lemma", "site"})
 public class Lemma {
 
     @Id
@@ -35,6 +35,6 @@ public class Lemma {
     private String lemma;
 
     @Column(name = "frequency", nullable = false)
-    private Integer frequency = 1; // По умолчанию 1, чтобы избежать NULL
+    private Integer frequency = 1;
 
 }

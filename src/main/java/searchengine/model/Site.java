@@ -42,6 +42,6 @@ public class Site {
     private String name;
 
     @OneToMany(mappedBy = "site", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonIgnore // Если вы хотите игнорировать это поле при сериализации
+    @JsonIgnore
     private List<Page> pages = new ArrayList<>();
 }
