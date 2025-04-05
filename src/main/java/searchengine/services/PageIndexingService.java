@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import searchengine.model.Page;
 import searchengine.model.Site;
 import searchengine.model.Lemma;
@@ -19,16 +18,14 @@ import searchengine.repository.PageRepository;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.SiteRepository;
 import searchengine.repository.IndexRepository;
-import searchengine.services.IndexingService ;
 import java.io.IOException;
+import java.util.concurrent.ForkJoinPool;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.net.URL;
 import org.jsoup.select.Elements;
 import org.jsoup.nodes.Element;
 import searchengine.utils.LemmaProcessor;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.RecursiveAction;
 
 @Service
 public class PageIndexingService {
@@ -43,8 +40,9 @@ public class PageIndexingService {
     private SiteRepository siteRepository;
     @Autowired
     private SitesList sitesList;
-
+    @Autowired
     private IndexingService indexingService;
+
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
     private final ForkJoinPool forkJoinPool = new ForkJoinPool();
 
@@ -74,7 +72,7 @@ public class PageIndexingService {
         visitedUrls.clear();
 
         try {
-            forkJoinPool.invoke(new PageIndexingTask(url, site));
+            processPageRecursively(url, site);
 
             site.setStatus(IndexingStatus.INDEXED);
             site.setStatusTime(LocalDateTime.now());
@@ -90,14 +88,8 @@ public class PageIndexingService {
         }
     }
 
-    private class PageIndexingTask extends RecursiveAction {
-        private final String url;
-        private final Site site;
 
-        public PageIndexingTask(String url, Site site) {
-            this.url = url;
-            this.site = site;
-        }
+
 
         private boolean isValidInternalUrl(String url, String baseUrl) {
             if (url.matches(".*\\/institute\\/staff\\/[^\\/]+")) {
@@ -118,83 +110,78 @@ public class PageIndexingService {
                     !url.matches(".*[\\sА-Яа-яЁё].*");
         }
 
-        @Override
-        protected void compute() {
-            if (!visitedUrls.add(url)) {
+    private void processPageRecursively(String url, Site site) {
+        if (!visitedUrls.add(url)) {
+            return;
+        }
+
+        try {
+            if (!isValidInternalUrl(url, site.getUrl())) {
+                logger.info("Пропускаем страницу (не HTML или неподдерживаемый формат): {}", url);
                 return;
             }
 
-            try {
-                if (!isValidInternalUrl(url, site.getUrl())) {
-                    logger.info("Пропускаем страницу (не HTML или неподдерживаемый формат): {}", url);
-                    return;
-                }
-
-                String path = new URL(url).getPath();
-                if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
-                    logger.info("Пропускаем ранее проиндексированную страницу: {}", url);
-                    return;
-                }
-
-                int delay = (int) (500 + Math.random() * 1000);
-                Thread.sleep(delay);
-
-                org.jsoup.Connection.Response response = Jsoup.connect(url)
-                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .referrer("https://www.google.com")
-                        .execute();
-
-                int statusCode = response.statusCode();
-                if (statusCode != 200) {
-                    logger.warn("Ошибка при доступе к странице {}: HTTP статус {}", url, statusCode);
-                    return;
-                }
-
-                String contentType = response.contentType();
-                if (contentType == null || !contentType.contains("text/html")) {
-                    logger.info("Пропускаем страницу (не HTML, content-type: {}): {}", contentType, url);
-                    return;
-                }
-
-                Document document = response.parse();
-                String title = document.title();
-                String content = document.body().text();
-
-                Page page = new Page();
-                page.setSite(site);
-                page.setPath(path);
-                page.setContent(content);
-                page.setCode(200);
-                page.setTitle(title);
-                pageRepository.save(page);
-                logger.info("Страница добавлена: {}", url);
-
-                Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
-                saveLemmasAndIndexes(lemmaFrequencies, page);
-
-                Elements links = document.select("a[href]");
-                List<PageIndexingTask> subtasks = new ArrayList<>();
-
-                for (Element link : links) {
-                    String absUrl = link.absUrl("href");
-                    if (isValidInternalUrl(absUrl, site.getUrl())) {
-                        subtasks.add(new PageIndexingTask(absUrl, site));
-                    }
-                }
-
-                invokeAll(subtasks);
-
-            } catch (IOException e) {
-                logger.error("Ошибка при индексации страницы: {}", url, e);
-                updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logger.error("Ошибка в потоке индексации, прерывание выполнения", e);
-                updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
+            String path = new URL(url).getPath();
+            if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
+                logger.info("Пропускаем ранее проиндексированную страницу: {}", url);
+                return;
             }
-        }
 
-        private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
+            int delay = (int) (500 + Math.random() * 1000);
+            Thread.sleep(delay);
+
+            org.jsoup.Connection.Response response = Jsoup.connect(url)
+                    .userAgent("Mozilla/5.0...")
+                    .referrer("https://www.google.com")
+                    .execute();
+
+            if (response.statusCode() != 200) {
+                logger.warn("Ошибка при доступе к странице {}: HTTP статус {}", url, response.statusCode());
+                return;
+            }
+
+            String contentType = response.contentType();
+            if (contentType == null || !contentType.contains("text/html")) {
+                logger.info("Пропускаем страницу (не HTML, content-type: {}): {}", contentType, url);
+                return;
+            }
+
+            Document document = response.parse();
+            String title = document.title();
+            String content = document.body().text();
+
+            Page page = new Page();
+            page.setSite(site);
+            page.setPath(path);
+            page.setContent(content);
+            page.setCode(200);
+            page.setTitle(title);
+            pageRepository.save(page);
+            logger.info("Страница добавлена: {}", url);
+
+            Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
+            saveLemmasAndIndexes(lemmaFrequencies, page);
+
+            Elements links = document.select("a[href]");
+            for (Element link : links) {
+                String absUrl = link.absUrl("href");
+                if (isValidInternalUrl(absUrl, site.getUrl())) {
+                    processPageRecursively(absUrl, site);
+                }
+            }
+
+        } catch (IOException e) {
+            logger.error("Ошибка при индексации страницы: {}", url, e);
+            updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("Ошибка в потоке индексации, прерывание выполнения", e);
+            updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
+        }
+    }
+
+
+    private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
             Site site = siteRepository.findByUrl(url);
             if (site != null) {
                 site.setStatus(status);
@@ -278,4 +265,3 @@ public class PageIndexingService {
                     page.getPath(), newLemmas, updatedLemmas, savedIndexes);
         }
     }
-}
