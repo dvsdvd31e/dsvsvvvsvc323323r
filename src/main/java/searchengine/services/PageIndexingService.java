@@ -119,13 +119,18 @@ public class PageIndexingService {
         }
 
         private boolean isValidInternalUrl(String url, String baseUrl) {
-            // Проверка, если URL соответствует паттерну /institute/staff/{что-то}
+            // Игнорируем ссылки вида /institute/staff/{что-то}
             if (url.matches(".*\\/institute\\/staff\\/[^\\/]+")) {
-                return true;  // Пропускаем такие URL
+                return false;
             }
 
-            // Проверка, если в URL содержится дата, игнорируем такую ссылку
+            // Игнорируем ссылки, содержащие временные метки (даты)
             if (url.matches(".*\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{2}:\\d{2}.*")) {
+                return false;
+            }
+
+            // Игнорируем ссылки, содержащие email-адрес
+            if (url.matches(".*[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,6}.*")) {
                 return false;
             }
 
@@ -135,6 +140,8 @@ public class PageIndexingService {
                     !url.matches(".*[\\sА-Яа-яЁё].*");
         }
 
+
+
         @Override
         protected void compute() {
             if (!visitedUrls.add(url)) {
@@ -142,59 +149,60 @@ public class PageIndexingService {
             }
 
             try {
-                // Генерация случайной задержки между 0,5 и 5 секундами
-                int delay = (int) (1 + Math.random() * 1);  // задержка в диапазоне от 500 мс до 5000 мс
-                Thread.sleep(delay);  // Пауза
-
-                // Проверка расширения URL и пропуск не HTML файлов
+                // Проверка валидности URL до загрузки страницы
                 if (!isValidInternalUrl(url, site.getUrl())) {
                     logger.info("Пропускаем страницу (не HTML или неподдерживаемый формат): {}", url);
-                    return;  // Пропускаем страницу, если это не HTML или неподдерживаемый формат
+                    return;
                 }
+
+                // Проверка на уже проиндексированную страницу (по пути и siteId)
+                String path = new URL(url).getPath();
+                if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
+                    logger.info("Пропускаем ранее проиндексированную страницу: {}", url);
+                    return;
+                }
+
+                // Генерация случайной задержки между 0.5 и 1.5 секундами
+                int delay = (int) (500 + Math.random() * 1000);
+                Thread.sleep(delay);
 
                 // Запрос страницы
                 org.jsoup.Connection.Response response = Jsoup.connect(url)
                         .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .referrer("https://www.google.com")
-                        .execute();  // Получаем Response
+                        .execute();
 
                 int statusCode = response.statusCode();
                 if (statusCode != 200) {
                     logger.warn("Ошибка при доступе к странице {}: HTTP статус {}", url, statusCode);
-                    return;  // Пропускаем страницу с ошибочным статусом
+                    return;
                 }
 
-                // Проверяем MIME тип контента и пропускаем если это не HTML
                 String contentType = response.contentType();
                 if (contentType == null || !contentType.contains("text/html")) {
                     logger.info("Пропускаем страницу (не HTML, content-type: {}): {}", contentType, url);
-                    return;  // Пропускаем страницы, если контент не HTML
+                    return;
                 }
 
-                // Получаем Document из Response
                 Document document = response.parse();
-
-                // Проводим дальнейшую обработку только для HTML страниц
                 String title = document.title();
-                String content = document.body().text();  // Только текстовая часть страницы
-                String path = new URL(url).getPath();
+                String content = document.body().text();
 
-                if (!pageRepository.existsByPathAndSiteId(path, site.getId())) {
-                    Page page = new Page();
-                    page.setSite(site);
-                    page.setPath(path);
-                    page.setContent(content);
-                    page.setCode(200);
-                    page.setTitle(title);
-                    pageRepository.save(page);
-                    logger.info("Страница добавлена: {}", url);
+                // Сохраняем новую страницу
+                Page page = new Page();
+                page.setSite(site);
+                page.setPath(path);
+                page.setContent(content);
+                page.setCode(200);
+                page.setTitle(title);
+                pageRepository.save(page);
+                logger.info("Страница добавлена: {}", url);
 
-                    // Лемматизация текста страницы и сохранение лемм в базу данных
-                    Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
-                    saveLemmasAndIndexes(lemmaFrequencies, page);
-                }
+                // Лемматизация
+                Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
+                saveLemmasAndIndexes(lemmaFrequencies, page);
 
-                // Извлекаем ссылки
+                // Извлекаем и обрабатываем под-ссылки
                 Elements links = document.select("a[href]");
                 List<PageIndexingTask> subtasks = new ArrayList<>();
 
@@ -205,18 +213,18 @@ public class PageIndexingService {
                     }
                 }
 
-                // Запускаем новые задачи для ссылок
                 invokeAll(subtasks);
 
             } catch (IOException e) {
                 logger.error("Ошибка при индексации страницы: {}", url, e);
                 updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();  // Восстанавливаем флаг прерывания
+                Thread.currentThread().interrupt();
                 logger.error("Ошибка в потоке индексации, прерывание выполнения", e);
                 updateSiteStatus(site.getUrl(), IndexingStatus.FAILED, e.getMessage());
             }
         }
+
 
 
 
