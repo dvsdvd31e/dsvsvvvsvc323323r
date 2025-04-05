@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import searchengine.utils.LemmaProcessor;
 import java.util.List;
 
+
 public class PageCrawler extends RecursiveAction {
     private static final Logger logger = LoggerFactory.getLogger(PageCrawler.class);
     private final Site site;
@@ -121,7 +122,7 @@ public class PageCrawler extends RecursiveAction {
         }
     }
 
-    private    Map<String, Integer> lemmatizeText(String text) {
+    public Map<String, Integer> lemmatizeText(String text) {
         Map<String, Integer> lemmaFrequencies = new HashMap<>();
 
         try {

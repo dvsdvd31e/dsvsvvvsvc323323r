@@ -43,6 +43,7 @@ public class PageIndexingService {
     @Autowired
     private IndexingService indexingService;
 
+    private PageCrawler pageCrawler;
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
     private final ForkJoinPool forkJoinPool = new ForkJoinPool();
 
@@ -71,6 +72,9 @@ public class PageIndexingService {
 
         visitedUrls.clear();
 
+        // Инициализация объекта pageCrawler
+        pageCrawler = new PageCrawler(site, lemmaRepository, indexRepository, url, visitedUrls, pageRepository, indexingService);
+
         try {
             processPageRecursively(url, site);
 
@@ -89,26 +93,24 @@ public class PageIndexingService {
     }
 
 
-
-
-        private boolean isValidInternalUrl(String url, String baseUrl) {
-            if (url.matches(".*\\/institute\\/staff\\/[^\\/]+")) {
-                return false;
-            }
-
-            if (url.matches(".*\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{2}:\\d{2}.*")) {
-                return false;
-            }
-
-            if (url.matches(".*[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,6}.*")) {
-                return false;
-            }
-
-            return url.startsWith(baseUrl) &&
-                    !url.contains("#") &&
-                    !url.matches(".*\\.(pdf|jpg|jpeg|png|gif|docx|doc|xlsx|xls|zip|tar|rar|mp3|mp4|avi|exe|mrs1\\.fig|nc|dat|ppt|pptx)(\\?.*)?$") &&
-                    !url.matches(".*[\\sА-Яа-яЁё].*");
+    private boolean isValidInternalUrl(String url, String baseUrl) {
+        if (url.matches(".*\\/institute\\/staff\\/[^\\/]+")) {
+            return false;
         }
+
+        if (url.matches(".*\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\+\\d{2}:\\d{2}.*")) {
+            return false;
+        }
+
+        if (url.matches(".*[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,6}.*")) {
+            return false;
+        }
+
+        return url.startsWith(baseUrl) &&
+                !url.contains("#") &&
+                !url.matches(".*\\.(pdf|jpg|jpeg|png|gif|docx|doc|xlsx|xls|zip|tar|rar|mp3|mp4|avi|exe|mrs1\\.fig|nc|dat|ppt|pptx)(\\?.*)?$") &&
+                !url.matches(".*[\\sА-Яа-яЁё].*");
+    }
 
     private void processPageRecursively(String url, Site site) {
         if (!visitedUrls.add(url)) {
@@ -159,7 +161,7 @@ public class PageIndexingService {
             pageRepository.save(page);
             logger.info("Страница добавлена: {}", url);
 
-            Map<String, Integer> lemmaFrequencies = lemmatizeText(content);
+            Map<String, Integer> lemmaFrequencies = pageCrawler.lemmatizeText(content);
             saveLemmasAndIndexes(lemmaFrequencies, page);
 
             Elements links = document.select("a[href]");
@@ -182,86 +184,69 @@ public class PageIndexingService {
 
 
     private void updateSiteStatus(String url, IndexingStatus status, String errorMessage) {
-            Site site = siteRepository.findByUrl(url);
-            if (site != null) {
-                site.setStatus(status);
-                if (errorMessage != null) {
-                    site.setLastError(errorMessage);
-                }
-                site.setStatusTime(LocalDateTime.now());
-                siteRepository.save(site);
-                System.out.println("Статус сайта обновлен: " + url + " — " + status);
+        Site site = siteRepository.findByUrl(url);
+        if (site != null) {
+            site.setStatus(status);
+            if (errorMessage != null) {
+                site.setLastError(errorMessage);
             }
-        }
-
-        private Map<String, Integer> lemmatizeText(String text) {
-            Map<String, Integer> lemmaFrequencies = new HashMap<>();
-
-            try {
-                LemmaProcessor lemmaProcessor = new LemmaProcessor();
-
-                List<String> words = lemmaProcessor.extractLemmas(text);
-
-                for (String word : words) {
-                    lemmaFrequencies.put(word, lemmaFrequencies.getOrDefault(word, 0) + 1);
-                }
-            } catch (Exception e) {
-                logger.error("Ошибка лемматизации текста: {}", e.getMessage());
-            }
-            return lemmaFrequencies;
-        }
-
-        private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
-            int newLemmas = 0;
-            int updatedLemmas = 0;
-            int savedIndexes = 0;
-
-            StringBuilder lemmaLog = new StringBuilder("Найденные леммы: ");
-
-            for (Map.Entry<String, Integer> entry : lemmaFrequencies.entrySet()) {
-                String lemmaText = entry.getKey();
-                int rank = entry.getValue();
-
-                lemmaLog.append(lemmaText).append(" (").append(rank).append("), ");
-
-                Optional<Lemma> optionalLemma = lemmaRepository.findByLemmaAndSite(lemmaText, page.getSite());
-
-                Lemma lemma;
-                try {
-                    if (optionalLemma.isPresent()) {
-                        lemma = optionalLemma.get();
-                        lemma.setFrequency(lemma.getFrequency() + 1);
-                        lemmaRepository.save(lemma);
-                        updatedLemmas++;
-                    } else {
-                        lemma = new Lemma();
-                        lemma.setLemma(lemmaText);
-                        lemma.setSite(page.getSite());
-                        lemma.setFrequency(1);
-                        lemmaRepository.save(lemma);
-                        newLemmas++;
-                    }
-
-                    Index index = new Index();
-                    index.setPage(page);
-                    index.setLemma(lemma);
-                    index.setRank((float) rank);
-
-                    try {
-                        indexRepository.save(index);
-                        savedIndexes++;
-                    } catch (org.hibernate.exception.ConstraintViolationException e) {
-                        logger.warn("Дублирующаяся запись для леммы '{}', пропускаем индекс.", lemmaText);
-                    }
-
-                } catch (Exception e) {
-                    logger.error("Ошибка при обработке леммы '{}': {}", lemmaText, e.getMessage());
-                }
-            }
-
-            logger.info(lemmaLog.toString());
-
-            logger.info("Страница '{}' обработана. Новых лемм: {}, Обновленных лемм: {}, Связок (индексов): {}",
-                    page.getPath(), newLemmas, updatedLemmas, savedIndexes);
+            site.setStatusTime(LocalDateTime.now());
+            siteRepository.save(site);
+            System.out.println("Статус сайта обновлен: " + url + " — " + status);
         }
     }
+
+    private void saveLemmasAndIndexes(Map<String, Integer> lemmaFrequencies, Page page) {
+        int newLemmas = 0;
+        int updatedLemmas = 0;
+        int savedIndexes = 0;
+
+        StringBuilder lemmaLog = new StringBuilder("Найденные леммы: ");
+
+        for (Map.Entry<String, Integer> entry : lemmaFrequencies.entrySet()) {
+            String lemmaText = entry.getKey();
+            int rank = entry.getValue();
+
+            lemmaLog.append(lemmaText).append(" (").append(rank).append("), ");
+
+            Optional<Lemma> optionalLemma = lemmaRepository.findByLemmaAndSite(lemmaText, page.getSite());
+
+            Lemma lemma;
+            try {
+                if (optionalLemma.isPresent()) {
+                    lemma = optionalLemma.get();
+                    lemma.setFrequency(lemma.getFrequency() + 1);
+                    lemmaRepository.save(lemma);
+                    updatedLemmas++;
+                } else {
+                    lemma = new Lemma();
+                    lemma.setLemma(lemmaText);
+                    lemma.setSite(page.getSite());
+                    lemma.setFrequency(1);
+                    lemmaRepository.save(lemma);
+                    newLemmas++;
+                }
+
+                Index index = new Index();
+                index.setPage(page);
+                index.setLemma(lemma);
+                index.setRank((float) rank);
+
+                try {
+                    indexRepository.save(index);
+                    savedIndexes++;
+                } catch (org.hibernate.exception.ConstraintViolationException e) {
+                    logger.warn("Дублирующаяся запись для леммы '{}', пропускаем индекс.", lemmaText);
+                }
+
+            } catch (Exception e) {
+                logger.error("Ошибка при обработке леммы '{}': {}", lemmaText, e.getMessage());
+            }
+        }
+
+        logger.info(lemmaLog.toString());
+
+        logger.info("Страница '{}' обработана. Новых лемм: {}, Обновленных лемм: {}, Связок (индексов): {}",
+                page.getPath(), newLemmas, updatedLemmas, savedIndexes);
+    }
+}
