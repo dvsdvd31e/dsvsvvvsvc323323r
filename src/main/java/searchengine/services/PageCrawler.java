@@ -55,6 +55,14 @@ public class PageCrawler extends RecursiveAction {
         }
 
         try {
+            String path = new URL(url).getPath();
+
+            // Пропускаем, если страница уже проиндексирована
+            if (pageRepository.existsByPathAndSiteId(path, site.getId())) {
+                logger.info("Пропускаем ранее проиндексированную страницу: {}", url);
+                return;
+            }
+
             long delay = 6 + new Random().nextInt(66);
             logger.debug("Задержка перед запросом: {} ms для URL: {}", delay, url);
             Thread.sleep(delay);
@@ -77,6 +85,7 @@ public class PageCrawler extends RecursiveAction {
             Thread.currentThread().interrupt();
         }
     }
+
 
     public void handleResponse(Connection.Response response) throws IOException {
         String contentType = response.contentType();
