@@ -32,10 +32,10 @@ public class ApiController {
     @Lazy
     private final IndexingService indexingService;
     private final ExecutorService executorService;
-    private final PageIndexingService pageIndexingService;  // Исправленное имя переменной
+    private final PageIndexingService pageIndexingService;
     private final SearchService searchService;
     private final SitesList sitesList;
-    private boolean indexingInProgress = false;  // Флаг индексации
+    private boolean indexingInProgress = false;
 
     public ApiController(@Lazy StatisticsService statisticsService,SitesList sitesList,SearchService searchService,@Lazy PageIndexingService pageIndexingService,@Lazy IndexingService indexingService, ExecutorService executorService) {
         this.statisticsService = statisticsService;
@@ -54,7 +54,6 @@ public class ApiController {
 
     @GetMapping("/startIndexing")
     public ResponseEntity<Map<String, Object>> startIndexing() {
-        // Проверяем, если индексация уже идет
         if (indexingInProgress) {
             Map<String, Object> response = new HashMap<>();
             response.put("result", false);
@@ -62,19 +61,15 @@ public class ApiController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
         }
 
-        // Устанавливаем флаг, что индексация запущена
         indexingInProgress = true;
 
         try {
-            // Запускаем индексацию асинхронно
             CompletableFuture.runAsync(() -> {
                 try {
-                    indexingService.startFullIndexing();  // Метод индексации, выполняющий долгую задачу
+                    indexingService.startFullIndexing();
                 } catch (Exception e) {
-                    // Обработка ошибок внутри индексации (можно логировать ошибки)
                     System.err.println("Ошибка при индексации: " + e.getMessage());
                 } finally {
-                    // После завершения индексации сбрасываем флаг
                     indexingInProgress = false;
                 }
             });
@@ -82,14 +77,13 @@ public class ApiController {
             Map<String, Object> response = new HashMap<>();
             response.put("result", true);
             response.put("message", "Индексация началась асинхронно.");
-            return ResponseEntity.ok(response); // Возвращаем успешный результат
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
-            // В случае ошибки сбрасываем флаг индексации
             indexingInProgress = false;
             Map<String, Object> response = new HashMap<>();
             response.put("result", false);
             response.put("error", "Ошибка при запуске индексации: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response); // Возвращаем ошибку
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
 
@@ -110,7 +104,6 @@ public class ApiController {
 
     @PostMapping("/indexPage")
     public ResponseEntity<Map<String, Object>> indexPage(@RequestParam String url) {
-        // Проверяем, если индексация уже идет
         if (indexingInProgress) {
             Map<String, Object> response = new HashMap<>();
             response.put("result", false);
@@ -118,19 +111,15 @@ public class ApiController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
         }
 
-        // Устанавливаем флаг, что индексация запущена
         indexingInProgress = true;
 
         try {
-            // Запускаем индексацию страницы
             CompletableFuture.runAsync(() -> {
                 try {
-                    pageIndexingService.indexPage(url);  // Метод индексации страницы
+                    pageIndexingService.indexPage(url);
                 } catch (Exception e) {
-                    // Логируем ошибку индексации страницы
                     logger.error("Ошибка при индексации страницы: {}", e.getMessage(), e);
                 } finally {
-                    // После завершения индексации сбрасываем флаг
                     indexingInProgress = false;
                 }
             });
@@ -140,7 +129,6 @@ public class ApiController {
             response.put("message", "Индексация страницы началась асинхронно.");
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            // В случае ошибки сбрасываем флаг индексации
             indexingInProgress = false;
             Map<String, Object> response = new HashMap<>();
             response.put("result", false);
@@ -148,8 +136,6 @@ public class ApiController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
-
-
 
     @GetMapping("/search")
     public ResponseEntity<SearchResponse> search(
