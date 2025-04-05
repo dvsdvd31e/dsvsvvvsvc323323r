@@ -19,6 +19,7 @@ import searchengine.repository.PageRepository;
 import searchengine.repository.LemmaRepository;
 import searchengine.repository.SiteRepository;
 import searchengine.repository.IndexRepository;
+import searchengine.services.IndexingService ;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +43,8 @@ public class PageIndexingService {
     private SiteRepository siteRepository;
     @Autowired
     private SitesList sitesList;
+
+    private IndexingService indexingService;
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
     private final ForkJoinPool forkJoinPool = new ForkJoinPool();
 
@@ -57,7 +60,7 @@ public class PageIndexingService {
 
         ConfigSite configSite = optionalConfigSite.get();
 
-        deleteSiteData(url);
+        indexingService.deleteSiteData(url);
 
         Site site = new Site();
         site.setUrl(configSite.getUrl());
@@ -84,27 +87,6 @@ public class PageIndexingService {
             site.setStatusTime(LocalDateTime.now());
             siteRepository.save(site);
             logger.error("Индексация завершилась с ошибкой: {}", e.getMessage(), e);
-        }
-    }
-
-    @Transactional
-    private void deleteSiteData(String siteUrl) {
-        searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
-        if (site != null) {
-            Long siteId = (long) site.getId();
-
-            int indexesDeleted = indexRepository.deleteBySiteId(site.getId());
-            int lemmasDeleted = lemmaRepository.deleteBySiteId(siteId);
-            int pagesDeleted = pageRepository.deleteAllBySiteId(site.getId());
-
-            siteRepository.delete(site);
-
-            logger.info("Удалено {} записей из таблицы index.", indexesDeleted);
-            logger.info("Удалено {} записей из таблицы lemma.", lemmasDeleted);
-            logger.info("Удалено {} записей из таблицы page для сайта {}.", pagesDeleted, siteUrl);
-            logger.info("Сайт {} успешно удален.", siteUrl);
-        } else {
-            logger.warn("Сайт {} не найден в базе данных.", siteUrl);
         }
     }
 

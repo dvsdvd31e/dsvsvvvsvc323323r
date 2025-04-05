@@ -192,7 +192,7 @@ public class IndexingService {
     }
 
     @Transactional
-    private void deleteSiteData(String siteUrl) {
+    public void deleteSiteData(String siteUrl) {
         searchengine.model.Site site = siteRepository.findByUrl(siteUrl);
         if (site != null) {
             Long siteId = (long) site.getId();
